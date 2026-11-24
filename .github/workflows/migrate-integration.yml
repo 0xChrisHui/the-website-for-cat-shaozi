@@ -132,6 +132,7 @@ jobs:
   advisors:
     needs: migrate
     uses: ./.github/workflows/db-advisors.yml
+    secrets: inherit
   publish:
     if: ${{ always() && !cancelled() && needs.verify.result == 'success' }}
     needs: [verify, migrate, advisors]

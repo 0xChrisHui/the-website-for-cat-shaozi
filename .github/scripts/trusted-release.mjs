@@ -125,7 +125,7 @@ function manual(event) {
   if (mode === "bootstrap-test") {
     requireEvidence(pr.head.ref === "stage-0" && pr.head.sha === ref && pr.state === "open", "Select the exact stage-0 PR head");
     requireEvidence(process.env.REVIEWED_SHA === ref, "The maintainer must independently confirm this exact SHA");
-    return [{ sha: ref, owner: "foundation" }];
+    return [{ sha: ref, owner: "foundation", reviewedBootstrap: true }];
   }
   requireEvidence(mode === "production" && pr.head.ref === "integration" && pr.head.sha === ref &&
     (readReviews(pr, ref) || process.env.REVIEWED_SHA === ref), "Use the maintainer-reviewed integration release SHA");

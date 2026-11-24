@@ -171,9 +171,18 @@ export async function migrate({ target, batches, expected, output, seed, expecte
       throw new Error("The maintainer must bootstrap the test schema from the reviewed PR first");
     }
     if (releases.length && releases[0].sha !== bootstrap) {
-      if (!batches[0].reviewedSha || releases[0].sha !== batches[0].reviewedSha) throw new Error("Bootstrap SHA and baseline disagree");
+      const original = releases[0];
+      const unchangedBootstrap = target === "test" && batches[0].reviewedBootstrap === true &&
+        batches.length === 1 && releases.length === 1 && shaPattern.test(original.sha) && original.types === expected &&
+        ledger.size === batches[0].files.length && batches[0].files.every((file) => ledger.get(file.name) === file.digest);
+      if (unchangedBootstrap) {
+        // A reviewed descendant may replace the PR-head marker before the first integration merge.
+        git("merge-base", "--is-ancestor", original.sha, bootstrap);
+      } else if (!batches[0].reviewedSha || original.sha !== batches[0].reviewedSha) {
+        throw new Error("Bootstrap SHA and baseline disagree");
+      }
       await client.query("update _memorial_releases set sha = $1 where position = 0", [bootstrap]);
-      releases[0].sha = bootstrap;
+      original.sha = bootstrap;
     }
     if (releases.length > batches.length) throw new Error("Requested target precedes the migration ledger");
     for (const [index, batch] of batches.entries()) {
@@ -239,6 +248,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const releases = JSON.parse(readFileSync(releasePath, "utf8"));
     const batches = collectBatches(releases);
     batches[0].reviewedSha = releases[0].reviewedSha;
+    batches[0].reviewedBootstrap = releases[0].reviewedBootstrap;
     const head = batches.at(-1).sha;
     const expected = expectation === "committed" || target === "production" ? git("show", head + ":src/lib/database.types.ts") :
       expectation && !expectation.startsWith("dir:") ? readFileSync(expectation, "utf8") : undefined;
