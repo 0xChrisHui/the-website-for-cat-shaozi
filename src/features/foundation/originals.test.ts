@@ -35,3 +35,20 @@ it("preserves original bytes and removes invalid staging", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it("accepts the same crashed upload again and preserves bytes when a position conflicts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "memorial-image-replay-"));
+  try {
+    const image = (background: string) => sharp({ create: { width: 4, height: 4, channels: 3, background } }).png().toBuffer();
+    const first = await image("black");
+    const different = await image("white");
+    await saveOriginal(directory, "0", stream(first), item(first));
+    await saveOriginal(directory, "0", stream(first), item(first));
+
+    await expect(saveOriginal(directory, "0", stream(different), item(different))).rejects.toThrow("Existing original differs");
+    expect(await readFile(join(directory, "0"))).toEqual(first);
+    expect(await readdir(directory)).toEqual(["0"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

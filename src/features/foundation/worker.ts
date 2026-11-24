@@ -1,10 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { join } from "node:path";
 import { del } from "@vercel/blob";
 import type { PoolClient } from "pg";
-import { z } from "zod";
 import { createBlobReader } from "@/lib/adapters/blob";
-import { fileRefSchema } from "@/lib/contracts/intake";
 import type { JobInput, WorkerContext } from "@/lib/contracts/jobs";
 import { readWorkerEnv } from "@/lib/env";
 import { assertDatabaseIdentity, queryRows, workerDatabase, type BusinessRow } from "@/lib/supabase/database";
@@ -13,13 +10,9 @@ import { handleJob as review } from "@/features/review/jobs";
 import { handleJob as permanent } from "@/features/permanent/jobs";
 import { handleJob as exports } from "@/features/exports/jobs";
 import { checkThresholds, createNotifier } from "./alerts";
-import { saveOriginal } from "./originals";
+import { bindIntakeOriginals } from "./intake-originals";
 
 const handlers = new Map([["intake", intake], ["review", review], ["permanent", permanent], ["exports", exports]]);
-const payloadSchema = z.object({
-  submissionId: z.uuid(),
-  items: z.array(z.object({ position: z.number().int().nonnegative(), attachmentRef: fileRefSchema })),
-});
 
 async function nextJob(db: PoolClient): Promise<JobInput | null> {
   const [row] = await queryRows<Pick<BusinessRow<"jobs">, "id" | "kind" | "schema_version" | "payload">>(db, `
@@ -29,46 +22,6 @@ async function nextJob(db: PoolClient): Promise<JobInput | null> {
     returning id, kind, schema_version, payload
   `);
   return row ? { jobId: row.id, kind: row.kind, schemaVersion: row.schema_version, payload: row.payload } : null;
-}
-
-async function processIntake(
-  db: PoolClient, job: JobInput, context: WorkerContext, root: string,
-  blob: { token: string; host: string; signal: AbortSignal },
-) {
-  const payload = payloadSchema.parse(job.payload);
-  let failed = false;
-  for (const { position, attachmentRef: file } of payload.items) {
-    const name = String(position);
-    const [stored] = await queryRows<{ sha: string }>(db, `
-      select v.file_ref->>'sha256' as sha from items i join item_versions v on v.item_id=i.id
-      where i.submission_id=$1 and i.position=$2 and v.version=1
-    `, [payload.submissionId, position]);
-    if (stored?.sha !== file.sha256) {
-      try {
-        await saveOriginal(join(root, payload.submissionId), name, await context.files.read(file.objectKey), file);
-      } catch {
-        failed = true;
-        continue;
-      }
-      await db.query("begin");
-      try {
-        const row = await db.query<Pick<BusinessRow<"items">, "id">>(
-          "insert into items(submission_id,position,kind) values($1,$2,'photo') returning id", [payload.submissionId, position],
-        );
-        await db.query("insert into item_versions(item_id,version,file_ref) values($1,1,$2)",
-          [row.rows[0]?.id, { ...file, objectKey: payload.submissionId + "/" + name }]);
-        await db.query("commit");
-      } catch (error) {
-        await db.query("rollback").catch(() => undefined);
-        throw error;
-      }
-    }
-    await db.query("select 1");
-    await del("https://" + blob.host + "/" + file.objectKey, { token: blob.token, abortSignal: AbortSignal.any([blob.signal, AbortSignal.timeout(10_000)]) }).catch(() => {
-      console.warn("暂存清理失败，等待对象到期");
-    });
-  }
-  await context.jobs.finish(job.jobId, failed ? "一项或多项原件校验失败" : undefined);
 }
 
 async function worker() {
@@ -126,11 +79,26 @@ async function worker() {
       if (job.schemaVersion !== 1) {
         await context.jobs.finish(job.jobId, "不支持的任务版本");
       } else if (job.kind === "foundation.intake") {
-        if (env.instance !== "test" || !env.BLOB_READ_WRITE_TOKEN || !env.BLOB_STORE_HOST) {
+        const { BLOB_READ_WRITE_TOKEN: token, BLOB_STORE_HOST: host } = env;
+        if (env.instance !== "test" || !token || !host) {
           await context.jobs.finish(job.jobId, "样板工作器配置缺失");
-        } else {
-          await processIntake(connection, job, context, root, { token: env.BLOB_READ_WRITE_TOKEN, host: env.BLOB_STORE_HOST, signal: lostConnection.signal });
+          continue;
         }
+        const originals = bindIntakeOriginals(connection, job.payload, root, {
+          read: (key) => context.files.read(key),
+          async remove(key) {
+            await del("https://" + host + "/" + key, {
+              token, abortSignal: AbortSignal.any([lostConnection.signal, AbortSignal.timeout(10_000)]),
+            });
+          },
+        });
+        if (!originals) {
+          await context.jobs.finish(job.jobId, "原件任务参数无效");
+          continue;
+        }
+        const results = await originals.persistPhotos();
+        const failed = results.some(({ status }) => status === "source_failed" || status === "conflict");
+        await context.jobs.finish(job.jobId, failed ? "一项或多项原件校验失败" : undefined);
       } else {
         const handler = handlers.get(job.kind.split(".")[0] ?? "");
         if (handler) await handler(job, context);
