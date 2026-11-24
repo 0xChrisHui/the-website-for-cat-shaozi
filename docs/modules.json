@@ -1,0 +1,142 @@
+{
+  "modules": [
+    {
+      "id": "foundation",
+      "dependsOn": [],
+      "writablePaths": [
+        ".gitignore",
+        ".gitattributes",
+        ".env.example",
+        ".npmrc",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "GEMINI.md",
+        "DESIGN.md",
+        "package.json",
+        "pnpm-lock.yaml",
+        "tsconfig.json",
+        "next.config.ts",
+        "postcss.config.mjs",
+        "components.json",
+        "eslint.config.mjs",
+        "vitest.config.ts",
+        "playwright.config.ts",
+        "vercel.json",
+        ".secretlintrc.json",
+        ".secretlintignore",
+        "src/app/layout.tsx",
+        "src/app/providers.tsx",
+        "src/app/page.tsx",
+        "src/app/error.tsx",
+        "src/app/not-found.tsx",
+        "src/app/globals.css",
+        "src/app/debug/**",
+        "src/app/api/debug/**",
+        "src/app/maintain/page.tsx",
+        "src/app/maintain/login/**",
+        "src/app/maintain/logout/**",
+        "src/proxy.ts",
+        "src/components/ui/**",
+        "src/lib/**",
+        "src/features/foundation/**",
+        "src/features/intake/jobs.ts",
+        "src/features/review/jobs.ts",
+        "src/features/permanent/jobs.ts",
+        "src/features/exports/jobs.ts",
+        "contracts/foundry.toml",
+        "contracts/remappings.txt",
+        "contracts/lib/**",
+        "contracts/test/Toolchain.t.sol",
+        "supabase/config.toml",
+        "supabase/migrations/**",
+        "supabase/seed.sql",
+        "supabase/tests/**",
+        "e2e/acceptance/**",
+        "e2e/support/**",
+        "e2e/fixtures/**",
+        ".ai/bin/setup-worktree.sh",
+        ".ai/bin/deploy-worker.sh",
+        ".ai/bin/systemd/memorial-worker@.service",
+        ".ai/bin/systemd/memorial-worker-deploy-test.service",
+        ".ai/bin/systemd/memorial-worker-deploy-test.timer",
+        "stage0/github/**",
+        "scripts/d1-probe.mjs",
+        "scripts/check-stage0.mjs",
+        "scripts/check-private-identifiers.mjs",
+        "scripts/prod-readonly.mjs",
+        "docs/decisions/foundation.md",
+        "docs/stage0-report.md"
+      ]
+    },
+    {
+      "id": "intake",
+      "dependsOn": [
+        "foundation"
+      ],
+      "writablePaths": [
+        "src/features/intake/**",
+        "src/app/api/intake/**",
+        "src/app/maintain/intake/**",
+        "e2e/features/intake/**",
+        "e2e/acceptance/delivered/intake.json",
+        "docs/decisions/intake.md",
+        "supabase/migrations/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_intake_*.sql"
+      ]
+    },
+    {
+      "id": "memorial",
+      "dependsOn": [
+        "foundation"
+      ],
+      "writablePaths": [
+        "src/features/review/**",
+        "src/app/maintain/page.tsx",
+        "src/app/maintain/review/**",
+        "src/app/maintain/settings/**",
+        "src/features/public/**",
+        "src/app/page.tsx",
+        "src/app/timeline/**",
+        "src/app/photos/**",
+        "src/app/diaries/**",
+        "src/app/api/media/**",
+        "e2e/features/memorial/**",
+        "e2e/acceptance/delivered/memorial.json",
+        "docs/decisions/memorial.md",
+        "supabase/migrations/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_memorial_*.sql"
+      ]
+    },
+    {
+      "id": "permanent",
+      "dependsOn": [
+        "foundation"
+      ],
+      "writablePaths": [
+        "src/features/permanent/**",
+        "src/app/api/permanent/**",
+        "src/app/maintain/permanent/**",
+        "contracts/src/**",
+        "contracts/test/permanent/**",
+        "contracts/script/**",
+        "e2e/features/permanent/**",
+        "e2e/acceptance/delivered/permanent.json",
+        "docs/decisions/permanent.md",
+        "supabase/migrations/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_permanent_*.sql"
+      ]
+    },
+    {
+      "id": "exports",
+      "dependsOn": [
+        "memorial"
+      ],
+      "writablePaths": [
+        "src/features/exports/**",
+        "src/app/api/exports/**",
+        "src/app/maintain/exports/**",
+        "e2e/features/exports/**",
+        "e2e/acceptance/delivered/exports.json",
+        "docs/decisions/exports.md",
+        "supabase/migrations/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_exports_*.sql"
+      ]
+    }
+  ]
+}
