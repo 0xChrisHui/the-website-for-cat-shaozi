@@ -235,7 +235,7 @@ export async function migrate({ target, batches, expected, output, seed, expecte
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const [target, releasePath, output, expectation] = process.argv.slice(2);
+    const [target, releasePath, output, expectation, snapshots] = process.argv.slice(2);
     const releases = JSON.parse(readFileSync(releasePath, "utf8"));
     const batches = collectBatches(releases);
     batches[0].reviewedSha = releases[0].reviewedSha;

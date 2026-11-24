@@ -29,10 +29,16 @@ function validate(deployment, status) {
   assert(/^prj_\w+$/.test(project ?? "") && environment && numeric(actor) &&
     /^[a-z0-9-]+$/.test(slug ?? "") && /^[a-z0-9-]+\.vercel\.app$/.test(suffix ?? ""),
   "Configure the tested Vercel project, actor, environment and immutable deployment domain.");
+  const eventProject = projectId(deployment);
   assert(deployment.environment === environment && status.state === "success" &&
     deployment.production_environment === false && deployment.creator?.id === Number(actor) &&
-    status.creator?.id === Number(actor) && projectId(deployment) === project && sha.test(deployment.sha),
-  "Expected a successful deployment of the configured test project and SHA.");
+    status.creator?.id === Number(actor) && sha.test(deployment.sha),
+  "Expected a successful deployment from the configured Vercel actor.");
+  // Vercel's native GitHub records can carry only the commit SHA and the immutable URL.
+  // If the project ID is omitted, all status URL fields must match the pinned test host below.
+  assert(eventProject === project || (eventProject === undefined && deployment.ref === deployment.sha &&
+    status.target_url === status.environment_url && status.log_url === status.environment_url),
+  "Expected the configured Vercel project or its native deployment status.");
   const exact = new URL(status.environment_url);
   assert(exact.origin === status.environment_url.replace(/\/$/, "") && exact.protocol === "https:" &&
     !exact.username && !exact.password && exact.port === "" &&
@@ -56,18 +62,24 @@ try {
     const statusId = event.deployment_status.id;
     const evidence = validate(api("deployments/" + id), api("deployments/" + id + "/statuses/" + statusId));
     assert(evidence.sha === event.deployment.sha && evidence.sha === process.env.GITHUB_SHA, "Deployment and workflow SHAs differ.");
-    const integration = evidence.ref === "integration" || evidence.ref === "refs/heads/integration";
-    const branch = evidence.ref?.replace(/^refs\/heads\//, "");
-    const moduleId = /^(?:module\/|fix\/)(intake|memorial|permanent|exports)(?:-[1-9][0-9]*)?$/.exec(branch ?? "")?.[1] ?? "";
-    if (integration) {
-      const upstream = execFileSync("git", ["merge-base", "--is-ancestor", evidence.sha, "origin/integration"], { timeout: 15000 });
-      void upstream;
-    } else {
-      const prs = api("commits/" + evidence.sha + "/pulls?per_page=100");
-      assert(prs.some((pr) => pr.state === "open" && pr.head.sha === evidence.sha && pr.head.repo?.full_name === repo &&
-        (pr.base.ref === "integration" || (pr.base.ref === "main" && pr.head.ref === "stage-0"))),
-      "Require a current in-repository PR head or a verified integration deployment.");
+    let branch = evidence.ref?.replace(/^refs\/heads\//, "");
+    if (branch === evidence.sha) {
+      const integrationHead = execFileSync("git", ["for-each-ref", "--format=%(objectname)", "refs/remotes/origin/integration"],
+        { encoding: "utf8", timeout: 15000 }).trim();
+      if (integrationHead === evidence.sha) branch = "integration";
     }
+    const integration = branch === "integration";
+    if (integration) {
+      execFileSync("git", ["merge-base", "--is-ancestor", evidence.sha, "origin/integration"], { timeout: 15000 });
+    } else {
+      const prs = api("commits/" + evidence.sha + "/pulls?per_page=100").filter((pr) =>
+        pr.state === "open" && pr.head.sha === evidence.sha && pr.head.repo?.full_name === repo &&
+        (pr.base.ref === "integration" || (pr.base.ref === "main" && pr.head.ref === "stage-0")) &&
+        (branch === evidence.sha || pr.head.ref === branch));
+      assert(prs.length === 1, "Require one current in-repository PR head or a verified integration deployment.");
+      branch = prs[0].head.ref;
+    }
+    const moduleId = /^(?:module\/|fix\/)(intake|memorial|permanent|exports)(?:-[1-9][0-9]*)?$/.exec(branch ?? "")?.[1] ?? "";
     appendFileSync(process.env.GITHUB_OUTPUT, "sha=" + evidence.sha + "\norigin=" + evidence.origin + "\nintegration=" + integration + "\nmodule=" + moduleId + "\n");
     writeFileSync("deployment-evidence.json", JSON.stringify(evidence));
   } else if (mode === "publish") {
