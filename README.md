@@ -5,4 +5,4 @@
 > 本仓库是公开的：需求、问卷、`docs/` 里的所有内容都会被人看到。**猫的照片和任何私密信息不要提交进仓库**，照片只放对象存储。
 D3 smoke test: basic workflow.
 D3 retry probe B.
-D3 breaker probe 2.
+D3 breaker probe 3.
