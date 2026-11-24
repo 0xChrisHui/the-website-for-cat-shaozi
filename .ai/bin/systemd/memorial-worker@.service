@@ -1,0 +1,27 @@
+[Unit]
+Description=Memorial worker (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=agent
+Group=agent
+WorkingDirectory=/srv/memorial-worker/%i/current
+Environment=WORKER_INSTANCE=%i
+EnvironmentFile=/etc/memorial-worker/%i.env
+ExecStart=/usr/bin/env node --import tsx src/features/foundation/worker.ts
+TimeoutStopSec=120
+KillSignal=SIGTERM
+KillMode=mixed
+Restart=on-failure
+RestartSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/srv/memorial-worker/%i/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

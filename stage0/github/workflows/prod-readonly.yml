@@ -1,0 +1,23 @@
+# Install on main at G2. Enable the documented schedule then.
+name: production read only
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 22 * * *'
+permissions:
+  contents: read
+jobs:
+  production-readonly:
+    if: github.ref == 'refs/heads/main' && vars.ENABLE_PRODUCTION_READONLY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.3
+      - env:
+          PRODUCTION_ORIGIN: ${{ vars.PRODUCTION_ORIGIN }}
+        run: node scripts/prod-readonly.mjs

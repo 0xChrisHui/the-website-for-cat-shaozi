@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for a schema-verified integration worker release
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=3min
+Unit=memorial-worker-deploy-test.service
+
+[Install]
+WantedBy=timers.target
