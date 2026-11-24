@@ -4,6 +4,7 @@ import { runPrNumber } from './batch-evidence.mjs';
 
 const done = new Set(['merged', 'blocked', 'needs-human', 'skipped']);
 const active = new Set(['queued', 'running', 'waiting']);
+const reportPreflightReason = 'The report branch or task already exists';
 
 const labels = {
   merged: '已合并', blocked: '熔断', 'needs-human': '搁置，需人工',
@@ -67,15 +68,45 @@ function reportEntry(ledger) {
   };
 }
 
+function isOpenReportDraft(pr, branch) {
+  return pr?.state === 'OPEN' && pr.isDraft === true && pr.isCrossRepository === false &&
+    pr.baseRefName === 'integration' && pr.headRefName === branch;
+}
+
 async function advanceReport(ledger, { cezar, forge, save, now, summaryPath }) {
   const report = ledger.report ??= reportEntry(ledger);
   const workflow = 'final-report';
   const runs = await cezar.listRuns();
-  if (report.status === 'pending') {
-    if (forge.listOpenPrs(report.expectedBranch).length > 0 ||
-        runs.some(run => run.workflow === workflow && run.task?.split('\n', 1)[0] === report.key)) {
+  const pending = report.status === 'pending';
+  const unsubmitted = report.submittedAt == null && report.runId == null && report.prNumber == null;
+  const blockedAtPreflight = report.status === 'reconcile' && report.reconcileReason === reportPreflightReason;
+  let openPrs;
+  if (unsubmitted && (pending || blockedAtPreflight)) {
+    const possibleReportRuns = runs.filter(run => typeof run?.workflow !== 'string' ||
+      !run.workflow || run.workflow === workflow);
+    if (possibleReportRuns.some(run => typeof run?.task === 'string' && run.task.split('\n', 1)[0] === report.key)) {
       report.status = 'reconcile';
-      report.reconcileReason = 'The report branch or task already exists';
+      report.reconcileReason = 'The report task already exists before this batch recorded an attempt';
+      save(ledger);
+      return false;
+    }
+    if (possibleReportRuns.every(run => typeof run?.task === 'string' && run.task)) {
+      openPrs = forge.listOpenPrs(report.expectedBranch);
+      if (!Array.isArray(openPrs)) throw new Error('Unexpected open report PRs response');
+      const [pr] = openPrs;
+      if (openPrs.length === 1 && isOpenReportDraft(pr, report.expectedBranch) &&
+          Number.isSafeInteger(pr.number) && pr.number > 0) {
+        report.status = 'failed';
+        report.reason = 'The report branch is already occupied by open draft PR #' + pr.number;
+        delete report.reconcileReason;
+        return true;
+      }
+    }
+  }
+  if (pending) {
+    if (openPrs?.length !== 0) {
+      report.status = 'reconcile';
+      report.reconcileReason = unsubmitted ? reportPreflightReason : 'The pending report already has submission evidence';
       save(ledger);
       return false;
     }
@@ -110,8 +141,7 @@ async function advanceReport(ledger, { cezar, forge, save, now, summaryPath }) {
   if (['done', 'review'].includes(run.status)) {
     const number = runPrNumber(run);
     const pr = number ? forge.readPr(number) : null;
-    if (pr?.state === 'OPEN' && pr.isDraft === true && pr.isCrossRepository === false &&
-        pr.baseRefName === 'integration' && pr.headRefName === report.expectedBranch) {
+    if (isOpenReportDraft(pr, report.expectedBranch)) {
       report.prNumber = number;
       report.status = 'done';
       return true;
