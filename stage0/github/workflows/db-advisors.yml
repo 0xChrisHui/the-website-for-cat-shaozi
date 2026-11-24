@@ -1,0 +1,25 @@
+name: test database advisors
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * *'
+permissions:
+  contents: read
+jobs:
+  security:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: db-admin
+    steps:
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.115.0
+      - env:
+          SUPABASE_TELEMETRY_DISABLED: '1'
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          [[ "$SUPABASE_PROJECT_REF" =~ ^[a-z0-9]+$ ]]
+          supabase db advisors --project-ref "$SUPABASE_PROJECT_REF" --type security --fail-on error

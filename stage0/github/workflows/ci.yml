@@ -1,0 +1,56 @@
+name: ci
+on:
+  pull_request:
+    branches: [main, integration]
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.3
+      - run: corepack enable
+      - uses: actions/cache@v4
+        with:
+          path: .pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: corepack pnpm install --frozen-lockfile --store-dir ./.pnpm-store
+      - run: corepack pnpm verify
+      - run: corepack pnpm secrets
+      - env:
+          LOCAL_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          psql "$LOCAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/bootstrap-roles.sql
+          node .github/scripts/rehearse-pr.mjs "$BASE" "$HEAD" "$BRANCH"
+          psql "$LOCAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/permissions.sql
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.10.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.svm
+            contracts/cache
+          key: foundry-v1.10.0-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/lib/**/*.sol') }}
+      - run: forge test --root contracts

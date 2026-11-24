@@ -26,3 +26,9 @@ test-results/
 .DS_Store
 Thumbs.db
 desktop.ini
+.pnpm-store/
+next-env.d.ts
+*.tsbuildinfo
+contracts/out/
+contracts/cache/
+supabase/.temp/

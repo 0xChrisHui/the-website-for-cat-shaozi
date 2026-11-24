@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy the schema-verified test worker
+
+[Service]
+Type=oneshot
+User=agent
+Group=agent
+EnvironmentFile=/etc/memorial-worker/test-deploy.env
+ExecStart=/usr/bin/bash /srv/memorial-worker/deploy-worker.sh test --latest
+TimeoutStartSec=12min
+UMask=0077

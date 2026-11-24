@@ -1,0 +1,6 @@
+{
+  "eventId": "stage0-synthetic-mail",
+  "sender": "synthetic@example.invalid",
+  "receivedAt": "2026-01-01T00:00:00Z",
+  "items": [{ "kind": "diary", "position": 0, "diaryText": "合成样本" }]
+}
