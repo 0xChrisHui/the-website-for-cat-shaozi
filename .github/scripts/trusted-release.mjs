@@ -29,18 +29,48 @@ function isMaintainer(login) {
   return typeof maintainer === "string" && maintainer.length > 0 && login === maintainer;
 }
 
-function isApprovedSampleTicketRepair(pr, parent, merged) {
-  const reviewedBase = "a9ad0f0fe5f391b2e9da590b8025cd81f8b198de";
-  const reviewedHead = "e639f0cc6c3d8eb2b86de4845e8ebc9e820ede7f";
-  const paths = [
-    "src/app/api/debug/samples/public/route.ts",
-    "src/features/foundation/samples.test.ts",
-    "src/features/foundation/samples.ts",
-    "src/proxy.ts",
-  ];
-  if (pr.number !== 23 || pr.head.ref !== "ops/f2-public-sample-ticket" || pr.head.sha !== reviewedHead ||
-      !isMaintainer(pr.merged_by?.login ?? api("pulls/23").merged_by?.login)) return false;
-  // The maintainer authorizes only this reviewed patch. The normal module guard does not own these paths.
+const approvedFoundationRepairs = new Map([
+  [23, {
+    branch: "ops/f2-public-sample-ticket",
+    reviewedBase: "a9ad0f0fe5f391b2e9da590b8025cd81f8b198de",
+    reviewedHead: "e639f0cc6c3d8eb2b86de4845e8ebc9e820ede7f",
+    paths: [
+      "src/app/api/debug/samples/public/route.ts",
+      "src/features/foundation/samples.test.ts",
+      "src/features/foundation/samples.ts",
+      "src/proxy.ts",
+    ],
+  }],
+  [24, {
+    branch: "ops/f2-intake-original-persistence",
+    reviewedBase: "a9ad0f0fe5f391b2e9da590b8025cd81f8b198de",
+    reviewedHead: "2ab9de147dd4ea37ef6389b19abd03849c73f5d9",
+    paths: [
+      "src/features/foundation/intake-originals.test.ts",
+      "src/features/foundation/intake-originals.ts",
+      "src/features/foundation/originals.test.ts",
+      "src/features/foundation/originals.ts",
+      "src/features/foundation/worker.ts",
+    ],
+  }],
+  [25, {
+    branch: "ops/f2-intake-source-deduplication",
+    reviewedBase: "1e8e02dd2010b1f3158c4a7b44f5a5986f294571",
+    reviewedHead: "9f15d1c19c2553b33743a6214b73f48de2aa1366",
+    paths: [
+      "src/features/foundation/intake.ts",
+      "src/lib/contracts/intake.test.ts",
+      "src/lib/contracts/intake.ts",
+    ],
+  }],
+]);
+
+function isApprovedFoundationRepair(pr, parent, merged) {
+  const reviewed = approvedFoundationRepairs.get(pr.number);
+  if (!reviewed || pr.head.ref !== reviewed.branch || pr.head.sha !== reviewed.reviewedHead ||
+      !isMaintainer(pr.merged_by?.login ?? api("pulls/" + pr.number).merged_by?.login)) return false;
+  // These approvals cover only the reviewed patches. The normal module guard does not own those paths.
+  const { reviewedBase, reviewedHead, paths } = reviewed;
   return git("merge-base", parent, reviewedHead) === reviewedBase &&
     git("diff", "--name-only", "--no-renames", parent, merged) === paths.join("\n") &&
     git("ls-tree", merged, "--", ...paths) === git("ls-tree", reviewedHead, "--", ...paths);
@@ -97,8 +127,8 @@ function releasesThrough(target, requireChecks = true) {
     const typeSync = /^fix\/foundation-[1-9][0-9]*$/.test(branch) &&
       isMaintainer(pr.merged_by?.login ?? api("pulls/" + pr.number).merged_by?.login) &&
       git("diff", "--name-status", fields[1], sha) === "M\tsrc/lib/database.types.ts";
-    const sampleTicketRepair = isApprovedSampleTicketRepair(pr, fields[1], sha);
-    requireEvidence(owner || auxiliary || typeSync || sampleTicketRepair, "Unrecognised integration merge " + sha);
+    const foundationRepair = isApprovedFoundationRepair(pr, fields[1], sha);
+    requireEvidence(owner || auxiliary || typeSync || foundationRepair, "Unrecognised integration merge " + sha);
     if (requireChecks && !typeSync && !hasTrustedSchemaStatus(sha)) {
       const head = pr.head.sha;
       requireEvidence(fullSha.test(head), "Missing reviewed pull request head");
@@ -114,7 +144,7 @@ function releasesThrough(target, requireChecks = true) {
         guardRun?.path?.split("@")[0] === ".github/workflows/guard.yml" &&
         guardRun.event === "pull_request_target" && guardRun.conclusion === "success" &&
         guardRun.repository?.full_name === repository && hasRunEvidence(guardRun, "guard-" + head);
-      requireEvidence((sampleTicketRepair || trustedGuard) &&
+      requireEvidence((foundationRepair || trustedGuard) &&
         checkRuns.some((run) => run.name === "verify" && run.head_sha === head &&
           run.app?.slug === "github-actions" && run.conclusion === "success"),
       "Missing trusted guard and verify on " + head);
