@@ -59,7 +59,8 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.115.0
-      - run: corepack pnpm --dir .github/scripts install --frozen-lockfile --ignore-scripts
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: .github/scripts
       - uses: actions/download-artifact@v4
         with:
           name: verified-integration-input
@@ -95,7 +96,8 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.115.0
-      - run: corepack pnpm --dir .github/scripts install --frozen-lockfile --ignore-scripts
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: .github/scripts
       - uses: actions/download-artifact@v4
         with:
           name: verified-integration-input
