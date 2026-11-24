@@ -38,3 +38,5 @@ if (foundation.delivered) {
     expect(await page.getByRole("status").textContent()).not.toBe(runId);
   });
 }
+
+// E3 rehearsal: protected acceptance file modification.
