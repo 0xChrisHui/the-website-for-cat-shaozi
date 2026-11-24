@@ -22,4 +22,4 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           [[ "$SUPABASE_PROJECT_REF" =~ ^[a-z0-9]+$ ]]
-          supabase db advisors --project-ref "$SUPABASE_PROJECT_REF" --type security --fail-on error
+          supabase db advisors --linked --project-ref "$SUPABASE_PROJECT_REF" --type security --fail-on error

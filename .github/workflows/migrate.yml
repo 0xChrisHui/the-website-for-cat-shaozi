@@ -133,3 +133,4 @@ jobs:
     if: github.ref == 'refs/heads/main' && inputs.mode == 'bootstrap-test'
     needs: migrate
     uses: ./.github/workflows/db-advisors.yml
+    secrets: inherit
