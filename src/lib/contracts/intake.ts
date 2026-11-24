@@ -2,6 +2,16 @@ import { z } from "zod";
 
 export const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 export const eventId = z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/);
+export const stage0IntakeSource = "stage0-grok";
+const intakeSource = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
+
+// The source comes from the authenticated server configuration. Legacy stage0 keys contain no colon.
+export function intakeEventStorageKey(source: string, externalId: string) {
+  const verifiedSource = intakeSource.parse(source);
+  const validatedId = eventId.parse(externalId);
+  return verifiedSource === stage0IntakeSource ? validatedId : verifiedSource + ":" + validatedId;
+}
+
 export const mediaType = z.enum(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const file = z.object({ mediaType, sizeBytes: z.number().int().min(1).max(100 * 1024 ** 2), sha256 });
 export const fileRefSchema = file.extend({ objectKey: z.string().max(256) }).strict();
