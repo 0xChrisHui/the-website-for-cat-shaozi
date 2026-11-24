@@ -1,7 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { issueSignedToken, presignUrl } from "@vercel/blob";
 import { z } from "zod";
-import { intakeEventSchema, prepareUploadSchema } from "@/lib/contracts/intake";
+import { intakeEventSchema, intakeEventStorageKey, prepareUploadSchema, stage0IntakeSource } from "@/lib/contracts/intake";
 import { readSiteEnv } from "@/lib/env";
 import { queryRows, withWebsiteDb, type BusinessRow } from "@/lib/supabase/database";
 import { hidden } from "./samples";
@@ -103,12 +103,13 @@ export async function sampleIntake(request: Request, phase: "prepare" | "submit"
     if (input.items.length > env.INTAKE_MAX_ITEMS ||
         input.items.reduce((total, item) => total + item.attachmentRef.sizeBytes, 0) > env.INTAKE_MAX_EVENT_BYTES) throw new IntakeError(413);
     if (new Set(input.items.map((item) => item.position)).size !== input.items.length) throw new IntakeError(400);
+    const storedEventId = intakeEventStorageKey(stage0IntakeSource, input.eventId);
     const result = await withWebsiteDb(async (db) => {
-      await db.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", ["stage0:submit:" + input.eventId]);
+      await db.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", ["stage0:submit:" + storedEventId]);
       const [existing] = await queryRows<Pick<BusinessRow<"submissions">, "id" | "sender_hash"> & { job_id: string }>(db, `
         select s.id, s.sender_hash, j.id as job_id from submissions s join jobs j
         on j.payload->>'submissionId' = s.id::text and j.kind = 'foundation.intake'
-        where s.event_id = $1 and s.source = 'stage0-grok'`, [input.eventId]);
+        where s.event_id = $1 and s.source = $2`, [storedEventId, stage0IntakeSource]);
       if (existing) {
         if (existing.sender_hash !== sender) throw new IntakeError(409);
         return { submissionId: existing.id, jobId: existing.job_id, duplicate: true };
@@ -123,8 +124,8 @@ export async function sampleIntake(request: Request, phase: "prepare" | "submit"
         `, [file.objectKey, input.eventId, sender, position, file.mediaType, file.sizeBytes, file.sha256]);
         if (verified.rowCount !== 1) throw new IntakeError(400);
       }
-      await db.query("insert into submissions(id,event_id,sender_hash,received_at,source) values($1,$2,$3,$4,'stage0-grok')",
-        [submissionId, input.eventId, sender, input.receivedAt]);
+      await db.query("insert into submissions(id,event_id,sender_hash,received_at,source) values($1,$2,$3,$4,$5)",
+        [submissionId, storedEventId, sender, input.receivedAt, stage0IntakeSource]);
       await db.query("insert into jobs(id,kind,payload) values($1,'foundation.intake',$2)",
         [jobId, { submissionId, items: input.items }]);
       return { submissionId, jobId, duplicate: false };
