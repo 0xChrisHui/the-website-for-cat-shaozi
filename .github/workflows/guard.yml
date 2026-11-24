@@ -10,6 +10,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
+      statuses: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,6 +21,7 @@ jobs:
         with:
           node-version: 24.22.3
       - env:
+          GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.number }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -31,7 +34,16 @@ jobs:
           git fetch --no-tags origin "refs/pull/$PR_NUMBER/head:refs/guard/head"
           test "$(git rev-parse refs/guard/head)" = "$PR_HEAD"
           test "$(git rev-parse HEAD)" = "$PR_BASE"
-          node .github/scripts/guard.mjs "$PR_BASE" "$PR_HEAD" "$BASE_BRANCH" "$HEAD_BRANCH"
+          if [[ "$BASE_BRANCH" == main && "$HEAD_BRANCH" == integration ]]; then
+            git fetch --no-tags origin refs/heads/integration:refs/guard/integration
+            test "$(git rev-parse refs/guard/integration)" = "$PR_HEAD"
+            common=$(git merge-base "$PR_BASE" "$PR_HEAD")
+            git rev-list --first-parent "$PR_HEAD" | grep -Fx "$common" >/dev/null
+            git diff --quiet "$common" "$PR_HEAD" -- .github
+            node .github/scripts/preview-evidence.mjs schema "$PR_HEAD"
+          else
+            node .github/scripts/guard.mjs "$PR_BASE" "$PR_HEAD" "$BASE_BRANCH" "$HEAD_BRANCH"
+          fi
           jq -n --arg head "$PR_HEAD" --arg base "$PR_BASE" --arg pr "$PR_NUMBER"             '{head:$head, base:$base, pullRequest:$pr}' > guard-evidence.json
       - uses: actions/upload-artifact@v4
         with:

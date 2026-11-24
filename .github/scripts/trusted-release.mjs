@@ -62,6 +62,16 @@ function releasesThrough(target, requireChecks = true) {
       continue;
     }
     const fields = git("rev-list", "--parents", "-n", "1", sha).split(" ");
+    if (!pr && fields.length === 2) {
+      const paths = git("diff", "--name-only", fields[1], sha).split("\n");
+      const trustedFiles = new Set([".github/workflows/guard.yml", ".github/scripts/trusted-release.mjs"]);
+      // Recognize the maintainer's protected-main guard update mirrored to integration.
+      if (paths.length && paths.every((path) => trustedFiles.has(path)) &&
+          git("rev-list", "--first-parent", "origin/main").split("\n").includes(sha)) {
+        releases.push({ sha, owner: "none" });
+        continue;
+      }
+    }
     requireEvidence(fields.length === 2 && pr?.base.ref === "integration" && pr.head.repo?.full_name === repository,
       "Expected a single squash-merged pull request for " + sha);
     const branch = pr.head.ref;
