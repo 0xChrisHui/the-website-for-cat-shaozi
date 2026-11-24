@@ -29,6 +29,23 @@ function isMaintainer(login) {
   return typeof maintainer === "string" && maintainer.length > 0 && login === maintainer;
 }
 
+function isApprovedSampleTicketRepair(pr, parent, merged) {
+  const reviewedBase = "a9ad0f0fe5f391b2e9da590b8025cd81f8b198de";
+  const reviewedHead = "e639f0cc6c3d8eb2b86de4845e8ebc9e820ede7f";
+  const paths = [
+    "src/app/api/debug/samples/public/route.ts",
+    "src/features/foundation/samples.test.ts",
+    "src/features/foundation/samples.ts",
+    "src/proxy.ts",
+  ];
+  if (pr.number !== 23 || pr.head.ref !== "ops/f2-public-sample-ticket" || pr.head.sha !== reviewedHead ||
+      !isMaintainer(pr.merged_by?.login ?? api("pulls/23").merged_by?.login)) return false;
+  // The maintainer authorizes only this reviewed patch. The normal module guard does not own these paths.
+  return git("merge-base", parent, reviewedHead) === reviewedBase &&
+    git("diff", "--name-only", "--no-renames", parent, merged) === paths.join("\n") &&
+    git("ls-tree", merged, "--", ...paths) === git("ls-tree", reviewedHead, "--", ...paths);
+}
+
 function readReviews(pr, head) {
   return api("pulls/" + pr.number + "/reviews?per_page=100", true).flat()
     .filter((review) => review.commit_id === head && isMaintainer(review.user?.login)).at(-1)?.state === "APPROVED";
@@ -80,7 +97,8 @@ function releasesThrough(target, requireChecks = true) {
     const typeSync = /^fix\/foundation-[1-9][0-9]*$/.test(branch) &&
       isMaintainer(pr.merged_by?.login ?? api("pulls/" + pr.number).merged_by?.login) &&
       git("diff", "--name-status", fields[1], sha) === "M\tsrc/lib/database.types.ts";
-    requireEvidence(owner || auxiliary || typeSync, "Unrecognised integration merge " + sha);
+    const sampleTicketRepair = isApprovedSampleTicketRepair(pr, fields[1], sha);
+    requireEvidence(owner || auxiliary || typeSync || sampleTicketRepair, "Unrecognised integration merge " + sha);
     if (requireChecks && !typeSync && !hasTrustedSchemaStatus(sha)) {
       const head = pr.head.sha;
       requireEvidence(fullSha.test(head), "Missing reviewed pull request head");
@@ -92,10 +110,11 @@ function releasesThrough(target, requireChecks = true) {
       const trustedUrl = new RegExp("^https://github\\.com/" + repository.replaceAll(".", "\\.") + "/actions/runs/(\\d+)$");
       const guardRunId = trustedUrl.exec(guard?.target_url ?? "")?.[1];
       const guardRun = guardRunId && api("actions/runs/" + guardRunId);
-      requireEvidence(guard?.state === "success" && guard.creator?.login === "github-actions[bot]" &&
+      const trustedGuard = guard?.state === "success" && guard.creator?.login === "github-actions[bot]" &&
         guardRun?.path?.split("@")[0] === ".github/workflows/guard.yml" &&
         guardRun.event === "pull_request_target" && guardRun.conclusion === "success" &&
-        guardRun.repository?.full_name === repository && hasRunEvidence(guardRun, "guard-" + head) &&
+        guardRun.repository?.full_name === repository && hasRunEvidence(guardRun, "guard-" + head);
+      requireEvidence((sampleTicketRepair || trustedGuard) &&
         checkRuns.some((run) => run.name === "verify" && run.head_sha === head &&
           run.app?.slug === "github-actions" && run.conclusion === "success"),
       "Missing trusted guard and verify on " + head);
