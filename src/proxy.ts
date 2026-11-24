@@ -7,7 +7,8 @@ export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const diagnostic = path.startsWith("/debug") || path.startsWith("/api/debug");
   if (diagnostic && !diagnosticsEnabled()) return hidden();
-  if (diagnostic && ["/api/debug/samples/session", "/api/debug/intake/prepare", "/api/debug/intake/submit"].includes(path)) {
+  const redeemsPublicSample = request.method === "GET" && path === "/api/debug/samples/public";
+  if (diagnostic && (redeemsPublicSample || ["/api/debug/samples/session", "/api/debug/intake/prepare", "/api/debug/intake/submit"].includes(path))) {
     return NextResponse.next();
   }
   let response = NextResponse.next({ request });
