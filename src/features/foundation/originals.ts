@@ -40,8 +40,11 @@ export async function saveOriginal(
         metadata.width * metadata.height > 100_000_000) throw new Error("File type or size");
     await sharp(temp, { limitInputPixels: 100_000_000 }).resize({ width: 64 }).toBuffer();
     await rename(temp, destination);
-    const parent = await open(directory, "r");
-    try { await parent.sync(); } finally { await parent.close(); }
+    // Windows cannot fsync directory handles through Node.
+    if (process.platform !== "win32") {
+      const parent = await open(directory, "r");
+      try { await parent.sync(); } finally { await parent.close(); }
+    }
   } finally {
     await rm(temp, { force: true });
   }
