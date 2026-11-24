@@ -79,11 +79,20 @@ case ${1:-} in
   mark)
     number=${2:-}
     [[ "$number" =~ ^[1-9][0-9]*$ ]] || fail 'Cezar did not return a pull request number.'
-    read_pr "$number" OPEN
-    [[ "$pr_sha" == "$(git rev-parse HEAD)" && "$pr_draft" == true && "$pr_auto_merge" == false ]] ||
-      fail 'The draft does not match the submitted commit.'
-    printf '%s\n' "$pr_sha" > "$reviewed_file"
-    printf '%s\n' "$pr_sha"
+    expected_sha=$(git rev-parse HEAD)
+    # GitHub can briefly report the previous PR head after a successful push.
+    for attempt in 1 2 3 4 5; do
+      read_pr "$number" OPEN
+      [[ "$pr_draft" == true && "$pr_auto_merge" == false ]] ||
+        fail 'The smoke pull request is not safely in draft.'
+      if [[ "$pr_sha" == "$expected_sha" ]]; then
+        printf '%s\n' "$pr_sha" > "$reviewed_file"
+        printf '%s\n' "$pr_sha"
+        exit 0
+      fi
+      [[ "$attempt" == 5 ]] || sleep 2
+    done
+    fail 'GitHub did not confirm the submitted commit after five checks.'
     ;;
 
   merge)
