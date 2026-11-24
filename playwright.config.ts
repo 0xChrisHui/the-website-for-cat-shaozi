@@ -8,13 +8,16 @@ if (parsed.origin !== (value ?? local) || (value && parsed.protocol !== "https:"
   throw new Error("BASE_URL must be an exact HTTPS deployment origin or the local test origin");
 }
 
+const protectedPreview = parsed.protocol === "https:" && Boolean(process.env.VERCEL_AUTOMATION_BYPASS_SECRET);
+
 export default defineConfig({
   testDir: "./e2e",
   workers: process.env.BASE_URL ? 2 : 1,
   timeout: 90_000,
   retries: process.env.CI === "true" ? 1 : 0,
   reporter: [["list"], ["html", { open: "never" }], ["json", { outputFile: "test-results/report.json" }]],
-  use: { baseURL: parsed.origin, trace: "retain-on-failure", serviceWorkers: "block" },
+  // Network traces would include the authenticated deployment cookie.
+  use: { baseURL: parsed.origin, trace: protectedPreview ? "off" : "retain-on-failure", serviceWorkers: "block" },
   projects: [
     { name: "desktop", use: { viewport: { width: 1440, height: 900 } } },
     { name: "mobile", use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },

@@ -5,6 +5,7 @@ const https = z.url().refine((value) => new URL(value).protocol === "https:").op
 const shared = {
   SUPABASE_PROJECT_REF: z.string().regex(/^[a-z0-9]+$/).optional(),
   EXPECTED_DATABASE_HOST: optional,
+  DATABASE_CA_CERT_BASE64: optional,
   BLOB_READ_WRITE_TOKEN: optional,
   BLOB_STORE_HOST: z.string().regex(/^[a-z0-9.-]+$/).optional(),
 };

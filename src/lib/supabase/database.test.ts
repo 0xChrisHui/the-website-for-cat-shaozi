@@ -19,6 +19,10 @@ it("checks SQL identity and search path", async () => {
   const schema = "memorial_test";
   query.mockResolvedValueOnce({ rows: [{ role, schema, path: "memorial_test, pg_catalog" }] });
   await expect(assertDatabaseIdentity({ query }, role, schema)).resolves.toBeUndefined();
+  query.mockResolvedValueOnce({ rows: [{ role, schema, path: "memorial_test" }] });
+  await expect(assertDatabaseIdentity({ query }, role, schema)).resolves.toBeUndefined();
+  query.mockResolvedValueOnce({ rows: [{ role, schema, path: "memorial_test, public" }] });
+  await expect(assertDatabaseIdentity({ query }, role, schema)).rejects.toThrow("Business database identity");
   query.mockResolvedValueOnce({ rows: [{ role, schema: "memorial_prod", path: "memorial_prod, pg_catalog" }] });
   await expect(assertDatabaseIdentity({ query }, role, schema)).rejects.toThrow("Business database identity");
 });

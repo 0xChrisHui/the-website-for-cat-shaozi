@@ -15,6 +15,18 @@ export const test = base.extend<{ api: SameOriginApi; pageErrors: Error[]; bound
   boundary: [async ({ context, baseURL }, provide) => {
     if (!baseURL) throw new Error("BASE_URL missing");
     const secret = new URL(baseURL).protocol === "https:" ? process.env.VERCEL_AUTOMATION_BYPASS_SECRET : undefined;
+    if (secret) {
+      // Chromium follows server redirects without invoking Playwright's route again.
+      const response = await fetch(baseURL, {
+        headers: { "x-vercel-protection-bypass": secret, "x-vercel-set-bypass-cookie": "true" },
+        redirect: "manual", signal: AbortSignal.timeout(20_000),
+      });
+      const cookie = response.headers.getSetCookie().find((entry) => entry.startsWith("_vercel_jwt="));
+      const value = cookie?.split(";")[0]?.slice("_vercel_jwt=".length);
+      if (response.status !== 307 || !value) throw new Error("Vercel did not issue a Preview session cookie");
+      await response.body?.cancel();
+      await context.addCookies([{ name: "_vercel_jwt", value, url: baseURL, httpOnly: true, secure: true, sameSite: "Lax" }]);
+    }
     let closing = false;
     await context.route("**/*", async (route) => {
       if (new URL(route.request().url()).origin !== baseURL) return route.abort("blockedbyclient");

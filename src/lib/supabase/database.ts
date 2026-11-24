@@ -6,7 +6,8 @@ export type BusinessRow<T extends keyof Database["business"]["Tables"]> =
   Database["business"]["Tables"][T]["Row"];
 
 export function createBusinessPool(config: {
-  url?: string; project?: string; host?: string; scope: "test" | "prod"; actor: "web" | "worker";
+  url?: string; project?: string; host?: string; caBase64?: string;
+  scope: "test" | "prod"; actor: "web" | "worker";
 }) {
   const role = config.scope + "_" + config.actor;
   const schema = "memorial_" + config.scope;
@@ -24,7 +25,8 @@ export function createBusinessPool(config: {
   }
   url.search = "";
   const pool = new Pool({
-    connectionString: url.toString(), ssl: { rejectUnauthorized: true },
+    connectionString: url.toString(),
+    ssl: { rejectUnauthorized: true, ca: config.caBase64 && Buffer.from(config.caBase64, "base64").toString("utf8") },
     max: config.actor === "web" ? 4 : 1, connectionTimeoutMillis: 5_000,
     query_timeout: 15_000, allowExitOnIdle: true,
   });
@@ -37,8 +39,10 @@ export async function assertDatabaseIdentity(client: Pick<PoolClient, "query">, 
     "select current_user as role, current_schema() as schema, current_setting('search_path') as path",
   );
   const identity = result.rows[0];
+  // PostgreSQL searches pg_catalog implicitly when the role omits it.
+  const path = identity?.path.replaceAll(/["\s]/g, "");
   if (identity?.role !== role || identity.schema !== schema ||
-      identity.path.replaceAll(/["\s]/g, "") !== schema + ",pg_catalog") {
+      (path !== schema && path !== schema + ",pg_catalog")) {
     throw new Error("Business database identity");
   }
 }
@@ -50,6 +54,7 @@ export async function withWebsiteDb<T>(run: (client: PoolClient) => Promise<T>) 
   if (!env.environment || env.ci) throw new Error("Business database unavailable");
   web ??= createBusinessPool({
     url: env.DATABASE_URL, project: env.SUPABASE_PROJECT_REF, host: env.EXPECTED_DATABASE_HOST,
+    caBase64: env.DATABASE_CA_CERT_BASE64,
     scope: env.environment === "production" ? "prod" : "test", actor: "web",
   });
   const client = await web.pool.connect();
@@ -72,6 +77,7 @@ export function workerDatabase() {
   if (env.ci) throw new Error("Worker database unavailable");
   return createBusinessPool({
     url: env.WORKER_DATABASE_URL, project: env.SUPABASE_PROJECT_REF, host: env.EXPECTED_DATABASE_HOST,
+    caBase64: env.DATABASE_CA_CERT_BASE64,
     scope: env.instance, actor: "worker",
   });
 }
