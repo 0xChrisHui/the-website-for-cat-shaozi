@@ -95,3 +95,30 @@ export async function prepareReviewDisplay(db: Pick<PoolClient, "query">, payloa
   await blob.write(key, bytes, signal);
   if (!(await blob.read(key, signal))?.equals(bytes)) throw new Error("Review derivative unavailable");
 }
+
+// The worker can finish intake jobs but cannot enqueue display jobs under its role.
+export async function prepareIntakeDisplays(
+  db: Pick<PoolClient, "query">, submissionId: unknown, positions: number[], root: string,
+  blob: ReturnType<typeof reviewDisplayBlob>, signal: AbortSignal,
+) {
+  const { rows } = await db.query<{ itemId: string; versionId: string }>(`
+    select i.id as "itemId", v.id as "versionId"
+    from items i join item_versions v on v.item_id=i.id and v.version=1
+    where i.submission_id=$1 and i.position=any($2::int[]) and i.kind='photo'
+      and i.exclusion='none' and i.withdrawn_at is null
+      and not exists (select 1 from item_versions where item_id=i.id and version>1)
+      and not exists (select 1 from approvals where item_id=i.id)
+    order by i.position
+  `, [z.uuid().parse(submissionId), positions]);
+  let failed = false;
+  for (const binding of rows) {
+    signal.throwIfAborted();
+    try {
+      await prepareReviewDisplay(db, binding, root, blob, signal);
+    } catch {
+      failed = true;
+    }
+  }
+  signal.throwIfAborted();
+  return failed;
+}

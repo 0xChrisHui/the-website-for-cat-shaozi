@@ -4,10 +4,11 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { sameOrigin } from "@/features/foundation/samples";
-import { approveSubmission, ReviewConflict } from "@/features/review/approve";
+import { approveInbox, approveSubmission, ReviewConflict } from "@/features/review/approve";
+import type { InboxBinding } from "@/features/review/inbox-policy";
 import { readReviewForm } from "@/features/review/photo-decision";
 import { prepareReviewSample } from "@/features/review/sample";
-import { changeRealPreparation } from "@/features/review/real-preparation";
+import { changeRealPreparation, retryInboxDisplays } from "@/features/review/real-preparation";
 import { reviewScope } from "@/features/review/store";
 import { withdrawSubmission } from "@/features/review/withdraw";
 
@@ -73,4 +74,37 @@ async function updatePreparation(submissionId: string, itemId: string, versionId
     redirect(path + "?status=setup-conflict");
   }
   redirect(path + (change.kind === "prepare" ? "?status=preparing" : "?status=setup-saved"));
+}
+
+export async function confirmInbox(submissionId: string, binding: InboxBinding[]) {
+  await requireReviewAction();
+  try {
+    await approveInbox(submissionId, binding);
+  } catch (error) {
+    if (!(error instanceof ReviewConflict || error instanceof z.ZodError)) throw error;
+    redirect("/maintain?status=conflict");
+  }
+  redirect("/maintain?status=confirmed");
+}
+
+export async function retryInbox(submissionId: string, binding: { itemId: string; versionId: string }[], force: boolean) {
+  await requireReviewAction();
+  try {
+    await retryInboxDisplays(submissionId, binding, force);
+  } catch (error) {
+    if (!(error instanceof ReviewConflict || error instanceof z.ZodError)) throw error;
+    redirect("/maintain?status=conflict");
+  }
+  redirect("/maintain?status=preparing");
+}
+
+export async function withdrawInbox(submissionId: string) {
+  await requireReviewAction();
+  try {
+    await withdrawSubmission(submissionId);
+  } catch (error) {
+    if (!(error instanceof ReviewConflict)) throw error;
+    redirect("/maintain?status=conflict");
+  }
+  redirect("/maintain?status=withdrawn");
 }

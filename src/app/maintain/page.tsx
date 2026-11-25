@@ -4,12 +4,30 @@ import { Button } from "@/components/ui/button";
 import { diagnosticsEnabled } from "@/lib/env";
 import { readSample } from "@/features/foundation/samples";
 import { maintainNavigation } from "@/lib/maintain-navigation";
-import { requireMaintainer } from "@/lib/supabase/server";
+import { exportAccess, readExportStatus } from "@/features/exports/access";
+import { reviewScope } from "@/features/review/store";
+import { ReviewInbox } from "./review/inbox";
+import { ExportControls } from "./exports/controls";
 
-export default async function MaintainPage() {
+export default async function MaintainPage({ searchParams }: { searchParams: Promise<{ status?: string; inboxPage?: string }> }) {
   const sample = await readSample();
-  const user = sample ? null : await requireMaintainer();
-  if (!sample && !user) redirect("/maintain/login");
+  const scope = await reviewScope();
+  if (!scope) redirect("/maintain/login");
+  if (!sample) {
+    const access = await exportAccess();
+    const snapshot = access && await readExportStatus(null).catch(() => ({ unavailable: true as const }));
+    const { status, inboxPage } = await searchParams;
+    const page = inboxPage && /^[1-9]\d{0,5}$/.test(inboxPage) ? Number(inboxPage) : 1;
+    return <section className="space-y-6 py-6">
+      <h1 className="font-heading text-3xl font-semibold">维护后台</h1>
+      <ReviewInbox scope={scope} status={status} page={page} />
+      {snapshot && <section className="space-y-3" aria-labelledby="exports-heading">
+        <h2 id="exports-heading" className="font-heading text-xl font-semibold">离线快照</h2>
+        {"unavailable" in snapshot ? <p role="status">离线快照暂不可用。</p> : <ExportControls {...snapshot} />}
+      </section>}
+      <form action="/maintain/logout" method="post"><Button type="submit">退出登录</Button></form>
+    </section>;
+  }
 
   const diagnostics = diagnosticsEnabled();
   const links = maintainNavigation.filter(({ flag, path }) =>

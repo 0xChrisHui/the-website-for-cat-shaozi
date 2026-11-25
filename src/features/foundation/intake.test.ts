@@ -37,7 +37,7 @@ const photo = {
 };
 const commonDateHint = " 大概周六 ";
 
-function submit(items: unknown[], email = sender) {
+function submit(items: unknown[], email = sender, restrictionQuotes?: string[]) {
   return sampleIntake(new Request(origin + "/api/intake/submit", {
     method: "POST",
     headers: { authorization: "Bearer " + token, "content-type": "application/json" },
@@ -46,6 +46,7 @@ function submit(items: unknown[], email = sender) {
       receivedAt: "2026-01-01T17:00:00Z",
       sender: email,
       commonDateHint,
+      restrictionQuotes,
       items,
     }),
   }), "submit");
@@ -93,7 +94,7 @@ it("queues only original photos and stores verbatim diary text and hints with th
   expect(jobWrites).toHaveLength(1);
   const jobParams = jobWrites[0]?.[1];
   expect(jobParams).toEqual([jobId, {
-    submissionId,
+    submissionId, prepareDisplay: true,
     items: [{ kind: "photo", position: 5, attachmentRef: photo.attachmentRef }],
     hints: { commonDateHint, items: [
       { position: 2, dateHint: diary.dateHint },
@@ -172,4 +173,19 @@ it.each([
 ])("rejects unsupported item fields or missing content", async (item) => {
   expect((await submit([item])).status).toBe(400);
   expect(transaction).not.toHaveBeenCalled();
+});
+
+it("persists mail-level restriction flags without the submitted quote text", async () => {
+  const quote = "第 2 张不要上链";
+  const second = { ...photo, position: 7, exclusionQuote: undefined };
+  const response = await submit([second, diary, photo], sender, [quote]);
+  expect(response.status).toBe(202);
+  const payload = statements("insert into jobs")[0]?.[1]?.[1];
+  expect(payload.restrictions).toEqual([
+    { position: 7, flags: { site: false, zip: false, chain: true, nft: false, uncertain: false } },
+    { position: 2, flags: { site: false, zip: false, chain: false, nft: false, uncertain: false } },
+    { position: 5, flags: { site: false, zip: false, chain: false, nft: false, uncertain: false } },
+  ]);
+  expect(JSON.stringify(payload)).not.toContain(quote);
+  expect(statements("insert into approvals")).toHaveLength(0);
 });

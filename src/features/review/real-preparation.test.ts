@@ -46,3 +46,29 @@ it("registers only a verified display for an ordinary photo allowed in private Z
   expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("insert into item_usage_rights"),
     [itemId, false, true, false, false]);
 });
+
+it("serves only the authenticated current derivative and denies withdrawn or stale bindings", async () => {
+  const { readPrivateReviewDisplay } = await import("./real-preparation");
+  const { reviewScope } = await import("./store");
+  const photo = { id: itemId, version_id: versionId, version_number: 1, kind: "photo", position: 0,
+    withdrawn_at: null, approval: null, exclusion: "none" };
+  mocks.items.mockResolvedValue([photo]);
+  mocks.query.mockImplementation(async (sql: string) => ({
+    rows: sql.includes("as hints") ? [{
+      hints: { items: [] }, positions: [{ position: 0 }], automatic_display: true, status: "done",
+    }] : [],
+  }));
+  mocks.read.mockClear();
+  mocks.read.mockResolvedValue(Buffer.from("verified synthetic derivative"));
+  const binding = { itemId, versionId };
+  const signal = new AbortController().signal;
+  await expect(readPrivateReviewDisplay(submissionId, binding, signal)).resolves.toBeInstanceOf(Buffer);
+  expect(mocks.read).toHaveBeenCalledExactlyOnceWith(displayKey(itemId, versionId), signal);
+
+  vi.mocked(reviewScope).mockResolvedValueOnce(null);
+  await expect(readPrivateReviewDisplay(submissionId, binding, signal)).resolves.toBeNull();
+  await expect(readPrivateReviewDisplay(submissionId, { ...binding, versionId: submissionId }, signal)).resolves.toBeNull();
+  mocks.items.mockResolvedValue([{ ...photo, withdrawn_at: "2026-11-25T00:00:00Z" }]);
+  await expect(readPrivateReviewDisplay(submissionId, binding, signal)).resolves.toBeNull();
+  expect(mocks.read).toHaveBeenCalledOnce();
+});
