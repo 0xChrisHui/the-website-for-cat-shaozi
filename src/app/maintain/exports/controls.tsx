@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import type { JobSummary } from "@/lib/contracts/jobs";
+
+// The server-rendered button stays disabled until React can handle the click.
+const subscribeToHydration = () => () => {};
+const browserSnapshot = () => true;
+const serverSnapshot = () => false;
 
 export function ExportControls({ current, status, invalidated }: {
   current?: string;
@@ -11,6 +16,7 @@ export function ExportControls({ current, status, invalidated }: {
   invalidated: boolean;
 }) {
   const router = useRouter();
+  const hydrated = useSyncExternalStore(subscribeToHydration, browserSnapshot, serverSnapshot);
   const requestId = useRef<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, startRefresh] = useTransition();
@@ -45,7 +51,7 @@ export function ExportControls({ current, status, invalidated }: {
   }
 
   return <div className="space-y-3">
-    <Button type="button" onClick={generate} disabled={working}>生成离线快照</Button>
+    <Button type="button" onClick={generate} disabled={!hydrated || working}>生成离线快照</Button>
     <p role="status">
       {working ? "正在生成…" : failed ? "生成请求未确认，请重试。" :
         current ? "离线快照已生成。" : invalidated || status === "done" ? "需重新生成。" :
