@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { getContractAddress, keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { bindPhotoRelease } from "./photo-bootstrap";
+import { photoRecipientVersion } from "./mint";
 import { sha256 } from "./reconcile";
 
 it("independently binds the current integration release and an older approved deployment", () => {
@@ -11,9 +12,9 @@ it("independently binds the current integration release and an older approved de
   const rpc = "https://rpc.example.invalid";
   const chainId = 11155420;
   const rpcUrlHash = sha256(rpc);
-  const recipientVersion = "00000000-0000-4000-8000-000000000001";
   const deployer = privateKeyToAccount(generatePrivateKey()).address.toLowerCase() as `0x${string}`;
   const recipient = privateKeyToAccount(generatePrivateKey()).address.toLowerCase();
+  const recipientVersion = photoRecipientVersion(recipient)!;
   const release = (sha: string) => ({
     environment: "test", branch: "integration", chainId,
     releaseSha: sha, reviewedSha: sha, migrationSha: sha, acceptanceSha: sha,
@@ -46,6 +47,9 @@ it("independently binds the current integration release and an older approved de
   expect(bindPhotoRelease(input, workerSha, rpc + "/changed", artifact)).toBeNull();
   expect(bindPhotoRelease(input, workerSha, rpc, Buffer.concat([artifact, Buffer.from(" ")]))).toBeNull();
   expect(bindPhotoRelease({ ...input, mint: null }, workerSha, rpc)?.policy).toBeNull();
+  const changedRecipient = privateKeyToAccount(generatePrivateKey()).address.toLowerCase();
+  expect(bindPhotoRelease({ ...input, mint: { ...input.mint, recipient: changedRecipient } },
+    workerSha, rpc, artifact)).toBeNull();
   input.mint.deployment.reviewedSha = workerSha;
   expect(bindPhotoRelease(input, workerSha, rpc, artifact)).toBeNull();
 });

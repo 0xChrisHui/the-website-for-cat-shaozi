@@ -7,7 +7,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import type { ArchiveArtifact, ArLocal } from "./arlocal";
 import type { CurrentPhoto, PhotoContext } from "./execute";
 import { handleJob } from "./jobs";
-import { createMint, mintAbi, type MintArtifact, type MintPolicy, type MintRpc } from "./mint";
+import { createMint, mintAbi, photoRecipientVersion, type MintArtifact, type MintPolicy, type MintRpc } from "./mint";
 import type { Operation, Stored } from "./reconcile";
 
 type Journal = { archive: Stored<ArchiveArtifact> | null; mint: Stored<MintArtifact> | null };
@@ -26,7 +26,7 @@ export function createPhotoFixture(archive: ArLocal, save?: (snapshot: string) =
   };
   const itemId = randomUUID();
   const versionId = randomUUID();
-  const recipientVersion = randomUUID();
+  const recipientVersion = photoRecipientVersion(recipient)!;
   const identity = randomUUID();
   const photo: CurrentPhoto = {
     kind: "photo", identity, objectKey: "synthetic/photo", revoked: false,
@@ -46,8 +46,8 @@ export function createPhotoFixture(archive: ArLocal, save?: (snapshot: string) =
   let source: Buffer;
   const state = {
     archiveEnabled: true, mintEnabled: true, missing: false, network: 11155420, balance: 2_000_000n,
-    reserved: 0n, unknown: false, writes: 0, signs: 0, reads: 0, loseSend: false,
-    unavailable: false, beforeFile: () => {}, beforeSign: () => {},
+    reserved: 0n, unknown: false, writes: 0, signs: 0, reads: 0, loseSend: false, dropSend: false,
+    unavailable: false, beforeFile: () => {}, beforeCurrent: () => {}, beforeSign: () => {},
     reasons: [] as (string | undefined)[],
   };
 
@@ -68,6 +68,7 @@ export function createPhotoFixture(archive: ArLocal, save?: (snapshot: string) =
     code: async () => runtime,
     minter: async () => sender,
     token: async (_address, tokenId) => tokenId === result?.id ? { owner: result.owner, uri: result.uri } : null,
+    seen: async (hash) => hash === result?.hash,
     nonce: async () => result ? 2 : 1,
     balance: async () => state.balance,
     fees: async () => ({ maxFeePerGas: 10n, maxPriorityFeePerGas: 1n }),
@@ -79,6 +80,7 @@ export function createPhotoFixture(archive: ArLocal, save?: (snapshot: string) =
     async send(raw) {
       if (raw !== journal.mint?.raw || journal.mint.state !== "attempted") throw new Error("Missing durable attempt");
       state.writes++;
+      if (state.dropSend) throw new Error("Synthetic RPC disconnected before a visible result");
       const tx = parseTransaction(raw);
       const decoded = decodeFunctionData({ abi: mintAbi, data: tx.data! });
       if (decoded.functionName !== "mint") throw new Error("Unexpected job call");
@@ -147,14 +149,17 @@ export function createPhotoFixture(archive: ArLocal, save?: (snapshot: string) =
           state.signs++;
           return signer.signTransaction(parseTransaction(unsigned));
         }),
-        readCurrent: async () => state.missing ? null : structuredClone(photo),
+        readCurrent: async () => {
+          state.beforeCurrent();
+          return state.missing ? null : structuredClone(photo);
+        },
         archiveEnabled: async () => state.archiveEnabled,
         mintPolicy: async () => state.mintEnabled ? structuredClone(policy) : null,
         async withPhoto(_jobId, expectedItem, run) {
           if (locked || expectedItem !== itemId) return false;
           locked = true;
           try {
-            await run({ identity,
+            await run({ identity, versionId: photo.policy.currentVersionId,
               archive: operation(() => journal.archive, (value) => ({ ...journal, archive: value })),
               mint: operation(() => journal.mint, (value) => ({ ...journal, mint: value })),
               reservedFees: async () => ({ total: state.reserved, unknown: state.unknown }) });

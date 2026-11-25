@@ -5,7 +5,7 @@ import type { PermanentApprovalState } from "@/lib/contracts/review";
 import { evaluateContentPolicy } from "@/lib/policy/content";
 import { archivePhoto } from "./archive-photo";
 import type { ArchiveArtifact, ArLocal } from "./arlocal";
-import { photoToken, type Mint, type MintArtifact, type MintIntent, type MintPolicy } from "./mint";
+import { matchesMintPolicy, mintBudget, photoRecipientVersion, photoToken, type Mint, type MintArtifact, type MintIntent, type MintPolicy } from "./mint";
 import { check, PermanentCheck, reconcile, type Operation } from "./reconcile";
 
 export const photoJobKind = "permanent.archive-photo";
@@ -20,6 +20,7 @@ export interface CurrentPhoto extends PermanentApprovalState {
 
 interface PhotoLock {
   identity: string;
+  versionId: string;
   archive: Operation<ArchiveArtifact>;
   mint: Operation<MintArtifact>;
   /** Includes other unresolved operations for the same test signer, including deployments. */
@@ -35,7 +36,7 @@ export interface PhotoWorker {
   /** Read the current execution gate, fixed recipient and independently verified deployment. */
   mintPolicy(): Promise<MintPolicy | null>;
   /** Hold stable identity and test signer locks through durable writes and external operations. */
-  withPhoto(jobId: string, itemId: string, run: (locked: PhotoLock) => Promise<void>): Promise<boolean>;
+  withPhoto(jobId: string, itemId: string, run: (locked: PhotoLock) => Promise<void>, claim?: string): Promise<boolean>;
 }
 
 export type PhotoContext = WorkerContext & { permanentPhoto?: PhotoWorker };
@@ -60,24 +61,59 @@ export async function executePhotoJob(job: JobInput, context: PhotoContext) {
   }
   const { itemId } = payload.data;
   const worker = injected;
-  const locked = await worker.withPhoto(job.jobId, itemId, async ({ identity, archive, mint, reservedFees }) => {
+  const locked = await worker.withPhoto(job.jobId, itemId, async ({ identity, versionId, archive, mint, reservedFees }) => {
     async function current(action: "arweave" | "nft") {
       const photo = await worker.readCurrent(itemId);
       check(identity && photo?.identity === identity &&
         eligible(photo, itemId, action), "当前照片未获准执行");
+      check(photo.policy.currentVersionId === versionId, "照片版本已变化");
       return photo;
     }
 
     try {
-      // Recover a previously attempted mint even if current approval or gates were withdrawn.
-      if (mint.receipt && mint.receipt.state !== "signed") {
-        if (await worker.mint.verify(mint.receipt)) {
-          if (mint.receipt.state !== "confirmed") await mint.confirm();
+      async function mintAuthorization() {
+        const policy = await worker.mintPolicy();
+        const photo = await current("nft");
+        check(policy && photoRecipientVersion(policy.recipient) === policy.recipientVersion &&
+          photo.approvedRecipientConfigVersion === policy.recipientVersion &&
+          photo.currentRecipientConfigVersion === policy.recipientVersion, "铸造开关或固定接收配置不符");
+        return policy;
+      }
+
+      async function availableBudget(policy: MintPolicy) {
+        const reserved = await reservedFees(policy.sender);
+        check(!reserved.unknown, "同一签名账户存在待核对交易");
+        return reserved.total;
+      }
+
+      const storedMint = mint.receipt;
+      if (storedMint) {
+        if (await worker.mint.verify(storedMint)) {
+          if (storedMint.state !== "confirmed") await mint.confirm();
           await context.jobs.finish(job.jobId);
-        } else {
-          check(mint.receipt.state !== "confirmed", "已确认铸造凭证无法复核");
+          return;
         }
-        return;
+        check(storedMint.state !== "confirmed", "已确认铸造凭证无法复核");
+        if (storedMint.state === "attempted") {
+          if (!mint.replay || storedMint.intent.versionId !== versionId) return;
+          try {
+            const policy = await mintAuthorization();
+            check(matchesMintPolicy(storedMint.intent, policy), "审核铸造配置已变化");
+            if (!await worker.mint.canReplay?.(storedMint)) return;
+            await worker.mint.beforeSend(storedMint, policy, await availableBudget(policy));
+            check(isDeepStrictEqual(await mintAuthorization(), policy), "审核铸造配置已变化");
+            if (!await mint.replay()) return;
+            await worker.mint.send(storedMint).catch(() => undefined);
+          } catch (error) {
+            if (error instanceof PermanentCheck) return;
+            throw error;
+          }
+          if (await worker.mint.verify(storedMint)) {
+            await mint.confirm();
+            await context.jobs.finish(job.jobId);
+          }
+          return;
+        }
       }
 
       async function archiveAuthorization(versionId: string) {
@@ -87,7 +123,7 @@ export async function executePhotoJob(job: JobInput, context: PhotoContext) {
       }
 
       // Keep a queued approval resumable when execution is deliberately closed.
-      if ((!archive.receipt || archive.receipt.state === "signed") && !await worker.archiveEnabled()) return;
+      if (!archive.receipt && !await worker.archiveEnabled()) return;
       const archived = await reconcile(archive, {
         async sign() {
           const photo = await current("arweave");
@@ -104,18 +140,10 @@ export async function executePhotoJob(job: JobInput, context: PhotoContext) {
         verify: worker.archive.verify,
         beforeSend: worker.archive.beforeSend,
         authorize: (artifact) => archiveAuthorization(artifact.versionId),
+        canSend: () => worker.archiveEnabled(),
         send: worker.archive.send,
       });
       if (!archived) return;
-
-      async function mintAuthorization() {
-        const policy = await worker.mintPolicy();
-        const photo = await current("nft");
-        check(policy && policy.recipientVersion &&
-          photo.approvedRecipientConfigVersion === policy.recipientVersion &&
-          photo.currentRecipientConfigVersion === policy.recipientVersion, "铸造开关或固定接收配置不符");
-        return { policy, version: photo.policy.currentVersionId };
-      }
 
       const afterArchive = await worker.readCurrent(itemId);
       if (!eligible(afterArchive, itemId, "nft") && !mint.receipt) {
@@ -127,31 +155,23 @@ export async function executePhotoJob(job: JobInput, context: PhotoContext) {
         throw new PermanentCheck("铸造固定接收配置不符");
       }
       if (!await worker.mintPolicy()) return;
-      const { policy, version } = await mintAuthorization();
-      async function availableBudget() {
-        const reserved = await reservedFees(policy.sender);
-        check(!reserved.unknown, "同一签名账户存在待核对交易");
-        return reserved.total;
-      }
+      const policy = await mintAuthorization();
       const intent: MintIntent = {
         deployment: policy.deployment, sender: policy.sender, recipient: policy.recipient,
-        recipientVersion: policy.recipientVersion, versionId: version,
-        budget: { gas: policy.gasLimit.toString(), maxFeePerGas: policy.maxFeePerGas.toString(),
-          priority: policy.maxPriorityFeePerGas.toString(), total: policy.maxTotalFee.toString() },
+        recipientVersion: policy.recipientVersion, versionId, budget: mintBudget(policy),
         tokenId: photoToken(identity).toString(),
         uri: testUri(archived.id),
       };
       async function authorize(artifactIntent: MintIntent) {
         const latest = await mintAuthorization();
-        check(latest.version === version && isDeepStrictEqual(latest.policy, policy) &&
+        check(isDeepStrictEqual(latest, policy) &&
           isDeepStrictEqual(artifactIntent, intent), "照片版本或审核铸造配置已变化");
       }
-      if (mint.receipt) await authorize(mint.receipt.intent);
 
       const minted = await reconcile(mint, {
-        sign: async () => worker.mint.sign(intent, policy, await availableBudget(), () => authorize(intent)),
+        sign: async () => worker.mint.sign(intent, policy, await availableBudget(policy), () => authorize(intent)),
         verify: worker.mint.verify,
-        beforeSend: async (artifact) => worker.mint.beforeSend(artifact, policy, await availableBudget()),
+        beforeSend: async (artifact) => worker.mint.beforeSend(artifact, policy, await availableBudget(policy)),
         authorize: (artifact) => authorize(artifact.intent),
         send: worker.mint.send,
       });

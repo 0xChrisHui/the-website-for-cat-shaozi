@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   encodeFunctionData, getContractAddress, isAddress, keccak256, parseAbi, parseTransaction,
   recoverTransactionAddress, serializeTransaction, size, zeroAddress,
@@ -12,6 +13,15 @@ export const mintAbi = parseAbi([
   "function tokenURI(uint256 tokenId) view returns (string)",
 ]);
 export const photoToken = (identity: string) => BigInt(`0x${sha256(identity)}`);
+
+export function photoRecipientVersion(recipient: string) {
+  const address = recipient.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(address) || address === zeroAddress) return null;
+  const hash = sha256(`memorial:test:11155420:photo-recipient:${address}`);
+  // UUIDv8 with RFC variant bits. The address is the only operator-supplied input.
+  const variant = (8 | (parseInt(hash.charAt(16), 16) & 3)).toString(16);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-${variant}${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
 
 export interface ReviewedDeployment {
   reviewedSha: string;
@@ -44,6 +54,18 @@ export interface MintIntent {
   uri: string;
 }
 
+export function mintBudget(policy: MintPolicy) {
+  return { gas: policy.gasLimit.toString(), maxFeePerGas: policy.maxFeePerGas.toString(),
+    priority: policy.maxPriorityFeePerGas.toString(), total: policy.maxTotalFee.toString() };
+}
+
+export function matchesMintPolicy(intent: MintIntent, policy: MintPolicy) {
+  return intent.sender === policy.sender && intent.recipient === policy.recipient &&
+    intent.recipientVersion === policy.recipientVersion &&
+    isDeepStrictEqual(intent.deployment, policy.deployment) &&
+    isDeepStrictEqual(intent.budget, mintBudget(policy));
+}
+
 export type MintArtifact = Artifact & { intent: MintIntent; nonce: number };
 type Call = { from: Address; to: Address; data: Hex; value: 0n };
 type Fees = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
@@ -53,6 +75,7 @@ export interface MintRpc {
   code(address: Address, block?: bigint): Promise<Hex>;
   minter(address: Address): Promise<Address>;
   token(address: Address, id: bigint, block?: bigint): Promise<{ owner: Address; uri: string } | null>;
+  seen?(hash: Hex): Promise<boolean>;
   nonce(address: Address, block: "latest" | "pending"): Promise<number>;
   balance(address: Address): Promise<bigint>;
   fees(): Promise<Fees>;
@@ -185,6 +208,11 @@ export function createMint(rpc: MintRpc, sign: (unsigned: Hex, intent: MintInten
       await funds(await decode(artifact), policy, reserved, size(artifact.raw as Hex));
       await network();
       check(await nonce(artifact.intent.sender) === artifact.nonce, "铸造 nonce 已变化");
+    },
+    async canReplay(artifact: MintArtifact) {
+      // The same signed EIP-1559 bytes have the same hash, sender and nonce.
+      // A known pending transaction only needs receipt polling.
+      return rpc.seen !== undefined && !await rpc.seen(artifact.id as Hex);
     },
     send: (artifact: MintArtifact) => rpc.send(artifact.raw as Hex),
   };

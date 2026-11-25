@@ -49,3 +49,23 @@ max priority fee。广播前持久化原始签名交易和发送尝试状态。�
 恢复时保留原发布配置和 SHA。跨发布恢复须先由运维核对原凭证，测试适配器只处理精确发布。
 
 本步以合成签名器和 RPC 验证。实际 ArLocal、铸造和完整永久交付验收留待下一独立任务。
+
+## F3 · Test photo recipient binding and recovery
+
+Use the UUIDv8 returned by `photoRecipientVersion` in `src/features/permanent/mint.ts` for the reviewed
+OP Sepolia recipient. It derives from SHA-256 of `memorial:test:11155420:photo-recipient:` followed by
+the lowercase address, with the UUID version and variant bits set. Install that UUID in the photo release
+manifest, the fixed signer's recipient allowlist and `test.photo-permanent.recipientVersion` while the
+gates are closed. Legacy arbitrary UUIDs require a new manual approval before new mint execution.
+Allowlist the same lowercase address and continue verifying the decoded mint destination at the signer.
+The existing `POST /sign-op-sepolia-photo` request and response formats still apply.
+
+The worker checks stored receipts before send authorization. An attempted mint may replay once from the
+bound job if the original hash is absent, latest and pending nonces still match the signed nonce, and
+the current approval, release and fee checks pass. The worker records that replay on the original job
+and sends the original EIP-1559 bytes. Their hash, sender and nonce are identical. A pending hash,
+a consumed nonce or an exhausted replay leaves the worker polling the original receipt. An attempted
+ArLocal archive also remains lookup-only because this release has no verified duplicate-upload guarantee.
+If an outcome remains unknown, the operator must inspect the original ArLocal journal or OP transaction
+and nonce. Preserve the signed artifact and nonce reservation during this investigation. A stale approval
+or legacy recipient binding on a staged artifact also requires operator review before it can proceed.

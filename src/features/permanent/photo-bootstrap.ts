@@ -10,7 +10,7 @@ import type { TestPhotoAdapters } from "@/features/foundation/photo-store";
 import { createArLocal } from "./arlocal";
 import { createDeploymentReadRpc, createPhotoMintRpc } from "./deployment-io";
 import { bindDeploymentRelease, chainId, rawHex, signerAvailable, trustedDirectory } from "./deployment-release";
-import { createMint, mintAbi, type MintIntent, type MintPolicy } from "./mint";
+import { createMint, mintAbi, photoRecipientVersion, type MintIntent, type MintPolicy } from "./mint";
 import { check, sha256 } from "./reconcile";
 import { knownDeploymentSchema, verifyDeployment } from "./verify-deployment";
 
@@ -59,7 +59,7 @@ export function bindPhotoRelease(input: unknown, workerSha: string, rpcUrl: stri
   if (!mint) return { config, policy: null, bound: null };
   const known = mint.deployment;
   const bound = deployedArtifact && bindDeploymentRelease(known.manifest, known.reviewedSha, deployedArtifact);
-  if (!bound || mint.maxPriorityFeePerGas > mint.maxFeePerGas ||
+  if (!bound || photoRecipientVersion(mint.recipient) !== mint.recipientVersion || mint.maxPriorityFeePerGas > mint.maxFeePerGas ||
       mint.gasLimit * mint.maxFeePerGas > mint.maxTotalFee ||
       known.receipt.minter === zeroAddress || known.receipt.owner === zeroAddress) return null;
   const policy: MintPolicy = {

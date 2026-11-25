@@ -11,6 +11,7 @@ import { safeMigration } from "../../.github/scripts/migrate-schema.mjs";
 import { enqueueApprovedPhoto, photoKind } from "../../src/features/foundation/photo-approval.ts";
 import { bindTestPhotoWorker, hasUnsettledPhotoMint, retryPhotoJobs, testSignerLock } from "../../src/features/foundation/photo-store.ts";
 import { createArLocal } from "../../src/features/permanent/arlocal.ts";
+import { photoRecipientVersion } from "../../src/features/permanent/mint.ts";
 import { executePhotoJob } from "../../src/features/permanent/execute.ts";
 
 const root = mkdtempSync(join(tmpdir(), "foundation-photo-"));
@@ -93,7 +94,8 @@ try {
     const version = randomUUID();
     const version2 = randomUUID();
     const submission = randomUUID();
-    const recipientVersion = randomUUID();
+    const signer = "0x" + "11".repeat(20);
+    const recipientVersion = photoRecipientVersion(signer);
     const bytes = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#663322" } }).jpeg().toBuffer();
     const file = { objectKey: submission + "/0", mediaType: "image/jpeg", sizeBytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex") };
@@ -128,10 +130,10 @@ try {
     assert.equal((await prodWorker.query("select * from test_photo_jobs")).rowCount, 0);
     await worker.query("update jobs set status='running'");
     const job = { jobId, kind: photoKind, schemaVersion: 1, payload: { itemId } };
-    const signer = "0x" + "11".repeat(20);
     const policy = { sender: signer, recipient: signer, recipientVersion, deployment: {},
       gasLimit: 2n, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n, maxTotalFee: 9n };
     let archiveSends = 0;
+    let replayEligible = false;
     let mintSends = 0;
     let mintSigns = 0;
     let visible = false;
@@ -183,6 +185,7 @@ try {
           return { id: "0x" + "b".repeat(64), raw: "synthetic mint", nonce: 1, intent };
         },
         async verify(receipt) { observed = receipt.raw; return visible; },
+        canReplay: async () => replayEligible,
         beforeSend: async () => {},
         async send(artifact) {
           await verifyAttempt("mint", artifact.raw);
@@ -207,8 +210,28 @@ try {
       await assert.rejects(bound.read(file.objectKey), /integrity/);
       writeFileSync(join(root, file.objectKey), bytes);
     });
+    const { rows: [{ claim }] } = await worker.query("select updated_at::text as claim from jobs where id=$1", [jobId]);
+    if (!arlocal) {
+      await bound.worker.withPhoto(jobId, itemId, async ({ archive: operation }) => {
+        const artifact = await archive.sign(bytes, version, async () => {});
+        await operation.stage(artifact);
+        await operation.attempt();
+        await contender.query("update jobs set updated_at=clock_timestamp() where id=$1", [jobId]);
+        await assert.rejects(bound.worker.archive.send(artifact), /authorization changed/);
+        assert.equal((await worker.query("select state from test_photo_receipts")).rows[0].state, "signed");
+      }, claim);
+      await assert.rejects(bound.worker.withPhoto(jobId, itemId, async () => assert.fail("Replaced claim"), claim),
+        /binding unavailable/);
+    }
     await executePhotoJob(job, context());
     assert.deepEqual([archiveSends, mintSends, mintSigns, finished], [1, 1, 1, false]);
+    await executePhotoJob(job, context());
+    assert.equal(mintSends, 1);
+    replayEligible = true;
+    await executePhotoJob(job, context());
+    bound = bindTestPhotoWorker(contender, root, adapters, signal);
+    await executePhotoJob(job, context());
+    assert.deepEqual([mintSends, mintSigns, finished], [2, 1, false]);
     await assert.rejects(worker.query("update test_photo_receipts set artifact='{}'"), { code: "42501" });
     await assert.rejects(web.query("select * from test_photo_receipts"), { code: "42501" });
     assert.equal(await hasUnsettledPhotoMint(worker), true);
@@ -229,7 +252,7 @@ try {
     });
     visible = true;
     await executePhotoJob(job, context());
-    assert.deepEqual([archiveSends, mintSends, mintSigns, observed, finished], [1, 1, 1, "synthetic mint", true]);
+    assert.deepEqual([archiveSends, mintSends, mintSigns, observed, finished], [1, 2, 1, "synthetic mint", true]);
     assert.equal(await hasUnsettledPhotoMint(contender), false);
     // Recovery reset both jobs; the lock-loss exercise needs a newly claimed job.
     const reclaimed = await contender.query("update jobs set status='running' where id=$1 and status='queued'", [secondJobId]);
@@ -244,6 +267,31 @@ try {
       await monitored.worker.readCurrent(item2);
     }), /database lock lost/);
     assert.equal(controller.signal.aborted, true);
+    const stop = new AbortController();
+    const stopping = bindTestPhotoWorker(worker, root, adapters, signal, undefined, stop.signal);
+    await stopping.worker.withPhoto(secondJobId, item2, async ({ archive: operation }) => {
+      const artifact = { id: "c".repeat(43), raw: "synthetic stopped archive", digest: file.sha256, versionId: version2 };
+      await operation.stage(artifact);
+      await operation.attempt();
+      stop.abort();
+      await assert.rejects(stopping.worker.archive.send(artifact), { name: "AbortError" });
+      assert.equal((await worker.query("select state from test_photo_receipts where item_id=$1", [item2])).rows[0].state, "signed");
+    });
+    assert.equal((await worker.query("select pg_advisory_unlock(hashtextextended($1,0)) as held", [testSignerLock]))
+      .rows[0].held, false);
+    await contender.query("select pg_advisory_unlock_all()");
+    const nextVersion = randomUUID();
+    await web.query("insert into item_versions (id,item_id,version,file_ref) values ($1,$2,2,$3)",
+      [nextVersion, item2, { ...file, objectKey: submission + "/1" }]);
+    await web.query("insert into item_version_display (version_id,processed_media_ref) values ($1,$2)",
+      [nextVersion, "memorial/display/" + item2 + "/" + nextVersion]);
+    await web.query("insert into approvals (item_id,version_id,source,published,arweave) values ($1,$2,'manual',true,true)",
+      [item2, nextVersion]);
+    bound = bindTestPhotoWorker(worker, root, adapters, signal);
+    await bound.worker.withPhoto(secondJobId, item2, async ({ versionId }) => {
+      assert.equal(versionId, version2);
+      assert.equal(await bound.worker.readCurrent(item2), null);
+    });
     console.log("Disposable PostgreSQL photo approvals, roles, receipt recovery and external mock boundaries passed.");
   }
 } finally {
