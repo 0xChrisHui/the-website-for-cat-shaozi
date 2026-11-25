@@ -99,7 +99,7 @@ export async function invalidateExport(db: PoolClient, sample: SampleRun) {
     `);
     await db.query("update current_export set downloadable=false where downloadable");
   }
-  await db.query(`update private_export_objects set state='cleanup', mock_bytes=null
+  await db.query(`update private_export_objects set state='cleanup'
     where ${scopeMatch} and state in ('reserved', 'current')`, [sample]);
   if (sample !== null) {
     await db.query(`delete from private_export_objects where ${scopeMatch} and state='cleanup'`, [sample]);
