@@ -7,7 +7,7 @@ import { optimismSepolia } from "viem/chains";
 import { rawHex, signerAvailable, signerSocket } from "./deployment-release";
 
 const gasOracle = {
-  address: "0x420000000000000000000000000000000000000F",
+  address: optimismSepolia.contracts.gasPriceOracle.address,
   abi: parseAbi([
     "function getL1FeeUpperBound(uint256 unsignedTxSize) view returns (uint256)",
     "function getOperatorFee(uint256 gasUsed) view returns (uint256)",
