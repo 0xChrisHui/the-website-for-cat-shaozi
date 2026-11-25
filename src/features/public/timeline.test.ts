@@ -3,6 +3,7 @@ import { readPublishedTimeline } from "./timeline";
 import { readTimelineView } from "./sample-content";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/features/foundation/samples", () => ({ readPublicSample: async () => null }));
 const { withWebsiteDb, queryRows } = vi.hoisted(() => ({
   withWebsiteDb: vi.fn((run: (db: object) => unknown) => run({})),
   queryRows: vi.fn(),

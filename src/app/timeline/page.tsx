@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { connection } from "next/server";
 import { readTimelineView } from "@/features/public/sample-content";
 import { SamplePhoto } from "@/features/public/sample-photo";
@@ -35,6 +36,8 @@ export default async function TimelinePage() {
         <ol className={cards}>
           {timeline.items.map((item) => (
             <li key={item.itemId} className={card}>
+              {item.publicMediaRef && <Image src={item.publicMediaRef} alt={item.title || "照片"}
+                width={800} height={600} unoptimized className="aspect-4/3 w-full object-cover" />}
               <div className={copy}>
                 <time className="text-sm text-muted-foreground" dateTime={item.localDate}>{item.localDate}</time>
                 <h2 className="font-heading text-xl font-semibold">{item.title || (item.kind === "photo" ? "照片" : "日记")}</h2>
