@@ -19,3 +19,17 @@ Still open for full acceptance are signed grant reuse and concurrent limit enfor
 ### Local evidence
 
 Frozen install, `pnpm verify` (71 tests), and the focused Vitest suite (32 tests) passed. A disposable PostgreSQL probe exercised the actual queue SQL with a completed large HEIC reference, a failed job, and approved, withdrawn, excluded, revised, mismatched, missing and sample rows. Browser feature checks passed on desktop and mobile, including refresh and login enforcement for the sample draft URL. The unchanged locked intake spec passed on desktop and mobile with the flag enabled only in a disposable local copy. In the branch configuration the locked spec discovers zero tests.
+
+## F3 Diary-only intake queue and mixed end-to-end · 2026-11-25
+
+Branch `fix/intake-6`, integration ancestor `1f9e71de9c70767e716e75960444d4c47a570ad4`, draft PR #39.
+
+- **Decision:** Extend the existing queue SQL's `reviewable_count` with one diary branch (first-version `diary_text` is non-blank, no `file_ref`) beside the existing verified-original photo branch. Both branches share the same exclusions: not withdrawn, not excluded, no approval and no later version. A diary-only submission therefore shows as 「待审核」 with a photo count of 0, a mixed one keeps its verified originals, and photo-only behavior is unchanged. A diary item cannot revive a withdrawn, approved or ineligible submission. Fixed-callback, same-event replay and pre-approval public-timeline checks run as test-only evidence against a disposable local PostgreSQL carrying the current migrations and synthetic fixtures.
+- **Reason:** `plan.md` and `questionnaire.md` (Q05, Q08) state that photo-only, diary-only and mixed submissions are all valid private drafts. They also state that nothing is public before approval. One SQL path with the same approved and version rules avoids a second eligibility definition. A disposable database needs no schema change, shared test schema, protected path or real data.
+- **Alternative:** Run the same checks against the shared Preview or test schema. This was not chosen: it needs the maintainer's Preview rows, and synthetic rows would be mixed into shared state. A separate diary-only SQL query was also rejected because it would let the two eligibility rules drift apart.
+- **Reversal:** Remove the diary `or` branch from `reviewable_count` in `src/features/intake/maintainer-queue.ts` and the matching cases in `src/app/maintain/intake/page.test.ts`. The queue then returns to the F2 photo-only rule. No migration, data or flag has to be undone, and the intake delivery flag stays false.
+
+### Open items for the maintainer
+
+- CI on `6112e1a`. The second `verify` attempt passed, including `forge test`, after the first attempt failed to download Foundry. The trusted `guard` also passed on its second attempt after a GitHub fetch timeout on the first attempt. Collect fresh evidence if the PR head changes.
+- The deployed fixed callbacks and the real Dot rows on the Preview SHA still need the manual F2/F3 confirmation described in `plan.md`.
