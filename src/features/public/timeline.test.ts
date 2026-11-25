@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readPublishedTimeline } from "./timeline";
+import { readTimelineView } from "./sample-content";
 
 vi.mock("server-only", () => ({}));
 const { withWebsiteDb, queryRows } = vi.hoisted(() => ({
@@ -95,5 +96,32 @@ describe("public timeline", () => {
     vi.stubEnv(key, value);
     expect(await readPublishedTimeline()).toEqual([]);
     expect(withWebsiteDb).not.toHaveBeenCalled();
+  });
+});
+
+describe("public timeline fallback", () => {
+  it("keeps the approved projection in Preview without supplementing it with examples", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://synthetic.invalid");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "synthetic");
+    vi.stubEnv("SAMPLE_SESSION_SECRET", "0".repeat(32));
+    vi.stubEnv("MAINTAINER_UID", approved.item_id);
+    queryRows.mockResolvedValue([approved, { ...approved, published: false, title: "私有草稿" }]);
+
+    const view = await readTimelineView();
+    expect(view.kind).toBe("published");
+    expect(view.items).toMatchObject([{ title: approved.title }]);
+  });
+
+  it.each(["preview", "development"])("shows examples in %s when the projection is empty", async (environment) => {
+    vi.stubEnv("VERCEL_ENV", environment);
+    vi.stubEnv("CI", "true");
+    expect(await readTimelineView()).toMatchObject({ kind: "sample" });
+  });
+
+  it.each(["production", undefined])("keeps the fallback empty in %s", async (environment) => {
+    vi.stubEnv("VERCEL_ENV", environment);
+    vi.stubEnv("CI", "true");
+    expect(await readTimelineView()).toEqual({ kind: "published", items: [] });
   });
 });
