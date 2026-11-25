@@ -171,6 +171,27 @@ const approvedFoundationRepairs = new Map([
       "supabase/tests/foundation-test-photo.sql",
     ],
   }],
+  [47, {
+    branch: "ops/f3-f2-test-acceptance",
+    reviewedBase: "7dd8101e4ff6f7908a215c38b4699b71417294d3",
+    reviewedHead: "75875dbc52dbd3faa2bc3841cded4137900c3350",
+    paths: [
+      "e2e/acceptance/delivered/exports.json",
+      "e2e/acceptance/delivered/intake.json",
+      "e2e/acceptance/delivered/memorial.json",
+      "e2e/acceptance/exports.spec.ts",
+      "e2e/acceptance/memorial.spec.ts",
+      "src/app/maintain/intake/[submissionId]/page.tsx",
+      "src/app/maintain/review/[submissionId]/display/route.ts",
+      "src/app/maintain/review/[submissionId]/page.tsx",
+      "src/app/maintain/review/actions.ts",
+      "src/features/foundation/worker.ts",
+      "src/features/intake/review-display.test.ts",
+      "src/features/intake/review-display.ts",
+      "src/features/review/real-preparation.test.ts",
+      "src/features/review/real-preparation.ts",
+    ],
+  }],
 ]);
 
 function isApprovedFoundationRepair(pr, parent, merged) {
