@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import IntakePage from "./page";
+import IntakeDraftPage from "./[submissionId]/page";
+import { readMaintainerDraft } from "@/features/intake/maintainer-queue";
 
 const { readSample, readPublicSample, requireMaintainer, withWebsiteDb, queryRows } = vi.hoisted(() => ({
   readSample: vi.fn(),
@@ -97,4 +99,43 @@ it("requests one summary per pending real submission with a stable bounded order
   expect(sql).toMatch(/count\(\*\)::int as photo_count/);
   expect(sql).toMatch(/order by p\.received_at desc, p\.id desc/);
   expect(sql).not.toMatch(/sender_hash|event_id|diary_text/);
+});
+
+const submissionId = "050ac57a-ec5e-492d-815a-277f70c99481";
+
+it("keeps persisted draft details behind maintainer login and sample isolation", async () => {
+  requireMaintainer.mockResolvedValue(null);
+  expect(await readMaintainerDraft(submissionId)).toEqual({ state: "signed-out" });
+  requireMaintainer.mockResolvedValue({ id: "synthetic-maintainer" });
+  readSample.mockResolvedValue({ runId: "synthetic-run" });
+  expect(await readMaintainerDraft(submissionId)).toEqual({ state: "unavailable" });
+  expect(withWebsiteDb).not.toHaveBeenCalled();
+});
+
+it("reads original and diary versions from one submission and renders only private review content", async () => {
+  const file = {
+    objectKey: submissionId + "/0",
+    sizeBytes: 4096,
+    sha256: "a".repeat(64),
+    mediaType: "image/heic",
+  };
+  const receipt = { received_at: new Date("2026-11-25T02:00:00Z"), status: "done", excluded: false };
+  const diary = "合成日记\n请保留原句";
+  queryRows.mockResolvedValue([
+    { ...receipt, item_id: "photo", version_id: "photo-v1", kind: "photo", position: 0, file_ref: file },
+    { ...receipt, item_id: "diary", version_id: "diary-v1", kind: "diary", position: 1, diary_text: diary },
+  ]);
+  expect(await readMaintainerDraft(submissionId)).toMatchObject({
+    state: "ready",
+    draft: { submissionId, items: [
+      { kind: "photo", file, disposition: "pending" },
+      { kind: "diary", diaryText: diary, disposition: "pending" },
+    ] },
+  });
+  const html = renderToStaticMarkup(await IntakeDraftPage({ params: Promise.resolve({ submissionId }) }));
+  expect(html).toContain("待审核");
+  expect(html).toContain("4096 字节");
+  expect(html).toContain(diary);
+  expect(html).not.toContain(file.objectKey);
+  expect(queryRows).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), ["stage0-grok", submissionId]);
 });

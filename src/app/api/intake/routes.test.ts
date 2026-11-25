@@ -63,10 +63,10 @@ it.each([["prepare", prepare], ["submit", submit]] as const)("%s enforces token,
   expect(issueSignedToken).not.toHaveBeenCalled();
 });
 
-it("submits and replays a large HEIC through the same source-scoped storage contract", async () => {
+it("submits two events and replays a large HEIC through the same source-scoped storage contract", async () => {
   const query = vi.fn().mockResolvedValue({ rowCount: 1 });
   const runTransaction = (run: (db: { query: typeof query }) => unknown) => run({ query });
-  withWebsiteDb.mockImplementationOnce(runTransaction).mockImplementationOnce(runTransaction);
+  withWebsiteDb.mockImplementation(runTransaction);
   queryRows.mockResolvedValueOnce([]);
 
   const metadata = {
@@ -93,6 +93,16 @@ it("submits and replays a large HEIC through the same source-scoped storage cont
   expect(queryRows).toHaveBeenCalledTimes(2);
   expect(queryRows).toHaveBeenLastCalledWith(expect.anything(), expect.any(String),
     ["synthetic-preview-event", "stage0-grok"]);
-  expect(query.mock.calls.filter(([sql]) => sql.startsWith("insert into submissions"))).toHaveLength(1);
-  expect(query.mock.calls.filter(([sql]) => sql.startsWith("insert into jobs"))).toHaveLength(1);
+  queryRows.mockResolvedValueOnce([]);
+  const second = await submit(request("submit", { metadata: {
+    ...metadata,
+    eventId: "synthetic-preview-second",
+    items: metadata.items.map((item) => ({
+      ...item, attachmentRef: { ...item.attachmentRef, objectKey: "synthetic-second-stage" },
+    })),
+  } }));
+  expect(second.status).toBe(202);
+  expect((await second.json()).submissionId).not.toBe(submissionId);
+  expect(query.mock.calls.filter(([sql]) => sql.startsWith("insert into submissions"))).toHaveLength(2);
+  expect(query.mock.calls.filter(([sql]) => sql.startsWith("insert into jobs"))).toHaveLength(2);
 });
