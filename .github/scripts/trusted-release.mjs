@@ -252,6 +252,15 @@ const approvedFoundationRepairs = new Map([
       "supabase/migrations/20261125150000_memorial_auto_approval.sql",
     ],
   }],
+  [53, {
+    branch: "ops/f3-g3-checklist",
+    reviewedBase: "94087dc7047065a7b3c5ac1ee43f30a332911750",
+    reviewedHead: "e2a3e2892c3618ae7637dc13f3754e0603d35114",
+    paths: [
+      "docs/intake-checklist.json",
+      "docs/intake-checklist.md",
+    ],
+  }],
 ]);
 
 function isApprovedFoundationRepair(pr, parent, merged) {
