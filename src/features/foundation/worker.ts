@@ -3,14 +3,23 @@ import { del } from "@vercel/blob";
 import type { PoolClient } from "pg";
 import { createBlobReader } from "@/lib/adapters/blob";
 import type { JobInput, WorkerContext } from "@/lib/contracts/jobs";
+import { permanentDeploymentKind, type TestDeploymentReleaseSource } from "@/lib/contracts/permanent";
 import { readWorkerEnv } from "@/lib/env";
 import { assertDatabaseIdentity, queryRows, workerDatabase, type BusinessRow } from "@/lib/supabase/database";
 import { handleJob as intake } from "@/features/intake/jobs";
 import { handleJob as review } from "@/features/review/jobs";
-import { handleJob as permanent } from "@/features/permanent/jobs";
+import * as permanentJobs from "@/features/permanent/jobs";
 import { handleJob as exports } from "@/features/exports/jobs";
 import { checkThresholds, createNotifier } from "./alerts";
 import { bindIntakeOriginals } from "./intake-originals";
+import { enqueueTestDeployment, readTestDeploymentRelease } from "./permanent-release";
+import { createPermanentStore, DeploymentUnavailable, recoverWorkerJobs } from "./permanent-store";
+
+const permanentModule: {
+  handleJob: typeof permanentJobs.handleJob;
+  createDeploymentReleaseSource?: () => TestDeploymentReleaseSource;
+} = permanentJobs;
+const permanent = permanentModule.handleJob;
 
 const handlers = new Map([["intake", intake], ["review", review], ["permanent", permanent], ["exports", exports]]);
 
@@ -24,7 +33,7 @@ async function nextJob(db: PoolClient): Promise<JobInput | null> {
   return row ? { jobId: row.id, kind: row.kind, schemaVersion: row.schema_version, payload: row.payload } : null;
 }
 
-async function worker() {
+export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSource) {
   const env = readWorkerEnv();
   if (!env.WORKER_FILE_ROOT || !env.WORKER_FILE_ROOT.startsWith("/")) throw new Error("WORKER_FILE_ROOT");
   const root = env.WORKER_FILE_ROOT;
@@ -57,20 +66,25 @@ async function worker() {
       "select pg_try_advisory_lock(hashtextextended($1,0)) as locked", ["memorial-worker:" + schema],
     );
     if (!lock.rows[0]?.locked) throw new Error("Worker already running");
-    await connection.query(`
-      update jobs set status='queued',updated_at=now() where status='running'
-        and sample_run_id is null and kind='foundation.intake'
-    `);
-    await connection.query(`
-      update jobs set status='needs_attention',reason='重启后须人工核对',updated_at=now()
-        where status='running' and sample_run_id is null
-    `);
+    const releaseSource = env.instance === "test"
+      ? injectedReleaseSource ?? permanentModule.createDeploymentReleaseSource?.()
+      : undefined;
+    const deployment = createPermanentStore(connection, env.instance,
+      releaseSource && (() => readTestDeploymentRelease(releaseSource)));
+    await recoverWorkerJobs(connection, env.instance);
+    let nextReleaseCheck = 0;
     let nextHealthCheck = 0;
     while (!stop.signal.aborted) {
       if (Date.now() >= nextHealthCheck) {
         nextHealthCheck = Date.now() + 15 * 60 * 1000;
         await checkThresholds(env, notify).catch(() => console.warn("工作器巡检失败"));
       }
+      if (deployment && releaseSource && Date.now() >= nextReleaseCheck) {
+        nextReleaseCheck = Date.now() + 60_000;
+        await enqueueTestDeployment(env.instance, releaseSource, deployment.enqueue)
+          .catch(() => console.warn("测试部署发布核对失败"));
+      }
+      if (stop.signal.aborted) break;
       const job = await nextJob(connection);
       if (!job) {
         await delay(2000, undefined, { signal: stop.signal }).catch(() => undefined);
@@ -101,7 +115,18 @@ async function worker() {
         await context.jobs.finish(job.jobId, failed ? "一项或多项原件校验失败" : undefined);
       } else {
         const handler = handlers.get(job.kind.split(".")[0] ?? "");
-        if (handler) await handler(job, context);
+        if (job.kind === permanentDeploymentKind) {
+          if (deployment) {
+            try {
+              await permanent(job, { ...context, permanent: { withDeployment: deployment.withDeployment } });
+            } catch (error) {
+              if (!(error instanceof DeploymentUnavailable)) throw error;
+              await context.jobs.finish(job.jobId, "部署发布证据或持久凭证不可用");
+            }
+          } else {
+            await context.jobs.finish(job.jobId, "测试部署任务仅支持测试环境");
+          }
+        } else if (handler) await handler(job, context);
         else await context.jobs.finish(job.jobId, "不支持的任务类型");
       }
     }
@@ -112,7 +137,7 @@ async function worker() {
   }
 }
 
-worker().catch(() => {
+if (import.meta.main) runWorker().catch(() => {
   console.error("工作器已停止，请检查连接、配置和在途任务");
   process.exitCode = 1;
 });
