@@ -66,27 +66,25 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
           const rights = inboxPlan(item, metadata);
           const ready = allowed && !item.withdrawn_at && item.exclusion === "none" &&
             !restrictions.uncertain && setup.displayReady(item);
-          return <li key={item.id} className="min-w-0 space-y-1">
+          return <li key={item.id} className={photo ? "min-w-0 space-y-1" : "min-w-0 space-y-1 sm:col-span-2"}>
             <p className="font-medium">{photo ? "照片 " + number : "日记"}</p>
             {item.withdrawn_at ? <p>已撤下</p> : item.approval ? <p>
               {item.approval.published && canPublish(item, false) ? "已发布" : "已审核 · 私有"}
-            </p> : item.historical_approval ? <p>有历史审核记录</p> : <>
+            </p> : item.historical_approval ? <p>有历史审核记录</p> : null}
+            {allowed && <>
               {item.exclusion !== "none" && <p>保留已有排除记录</p>}
               {restrictions.uncertain && <p>邮件限制或照片范围不明确，需核对</p>}
               {restrictions.site && <p>邮件限制：不公开</p>}
               {restrictions.zip && <p>邮件限制：不纳入私有 ZIP</p>}
               {restrictions.chain && <p>邮件限制：不上链（归档和 NFT）</p>}
               {restrictions.nft && !restrictions.chain && <p>邮件限制：不铸造 NFT</p>}
-              {rights && allowed && <p>条目日期：<time dateTime={rights.localDate}>{rights.localDate}</time></p>}
+              {rights && <p>条目日期：<time dateTime={rights.localDate}>{rights.localDate}</time></p>}
               {photo && (ready ? <InboxPreview key={item.version_id + "-" + (setup.job(item.id, item.version_id)?.updated_at ?? "intake")}
                 number={number} src={"/maintain/review/" + row.id + "/display?" + new URLSearchParams({
                   item: item.id, version: item.version_id,
-                })} /> : rights && allowed && <p>{setup.active || waiting ? "正在准备私有预览…" : "私有预览待准备"}</p>)}
-              {!photo && allowed && !restrictions.uncertain && item.exclusion === "none" &&
-                <details>
-                  <summary className="cursor-pointer underline">查看日记全文</summary>
-                  <p className="mt-2 whitespace-pre-wrap wrap-anywhere">{item.diary_text}</p>
-                </details>}
+                })} /> : rights && <p>{setup.active || waiting ? "正在准备私有预览…" : "私有预览待准备"}</p>)}
+              {!photo && !item.withdrawn_at && item.diary_text &&
+                <p className="whitespace-pre-wrap wrap-anywhere">{item.diary_text}</p>}
             </>}
           </li>;
         })}
