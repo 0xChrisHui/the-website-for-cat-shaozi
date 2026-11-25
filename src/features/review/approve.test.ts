@@ -84,6 +84,17 @@ describe("manual confirmation", () => {
     expect(inserts[0]?.[1]).toEqual([itemId, versionId, true, false]);
   });
 
+  it("invalidates the same scope when a new approval grants private export", async () => {
+    current({ ...item, rights: { ...item.rights!, private_export: true } });
+    await approveSubmission(input);
+    const statements = mocks.query.mock.calls.map(([statement]) => statement);
+    expect(statements[0]).toContain("pg_advisory_xact_lock");
+    expect(statements).toContainEqual(expect.stringContaining("update current_export set downloadable=false"));
+    expect(statements).toContainEqual(expect.stringContaining("update private_export_objects"));
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("insert into approvals"),
+      [itemId, versionId, true, true]);
+  });
+
   it.each([
     { version_id: requestId },
     { rights: { ...item.rights!, public_view: false } },
@@ -110,10 +121,17 @@ describe("manual confirmation", () => {
   it("scopes signed sample review to that run and marks withdrawal without deleting receipts", async () => {
     mocks.readSample.mockResolvedValue({ runId: requestId });
     mocks.queryRows.mockResolvedValueOnce([{ sender_hash: "1".repeat(64) }]);
+    mocks.query.mockResolvedValue({ rowCount: 1, rows: [] });
     await withdrawSubmission(submissionId);
     expect(mocks.queryRows).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("for update"),
       ["memorial-review-sample", "memorial-review-sample:" + requestId, submissionId]);
-    expect(mocks.query).toHaveBeenCalledOnce();
+    const statements = mocks.query.mock.calls.map(([statement]) => statement);
+    expect(statements.some((statement) => /operation_receipts/i.test(statement))).toBe(false);
+    expect(statements.filter((statement) => /^delete/i.test(statement.trim()))).toEqual([
+      expect.stringContaining("delete from private_export_objects"),
+    ]);
+    expect(statements[0]).toContain("pg_advisory_xact_lock");
+    expect(statements).toContainEqual(expect.stringContaining("update private_export_objects"));
     expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("set withdrawn_at = now()"), [submissionId]);
   });
 });
