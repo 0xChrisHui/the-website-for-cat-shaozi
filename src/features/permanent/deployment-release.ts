@@ -70,16 +70,16 @@ function rootControlled(stat: { uid: number; mode: number }) {
   return stat.uid === 0 && (stat.mode & 0o022) === 0;
 }
 
-async function trustedDirectory(path: string) {
+export async function trustedDirectory(path: string) {
   const stat = await lstat(path);
   return stat.isDirectory() && rootControlled(stat);
 }
 
-export async function signerAvailable() {
+export async function signerAvailable(socket = signerSocket) {
   if (!await trustedDirectory("/run") || !await trustedDirectory("/run/memorial-test-signer")) return false;
-  const stat = await lstat(signerSocket);
+  const stat = await lstat(socket);
   if (!stat.isSocket() || stat.uid !== 0 || (stat.mode & 0o002) !== 0) return false;
-  await access(signerSocket, constants.W_OK);
+  await access(socket, constants.W_OK);
   return true;
 }
 

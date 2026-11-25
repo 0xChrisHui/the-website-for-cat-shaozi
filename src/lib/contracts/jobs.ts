@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PhotoWorker } from "@/features/permanent/execute";
 import type { PermanentWorker } from "./permanent";
 
 export const jobStatus = z.enum(["queued", "running", "done", "needs_attention"]);
@@ -18,4 +19,5 @@ export interface WorkerContext {
   jobs: { finish(jobId: string, reason?: string): Promise<void> };
   clock: () => Date;
   permanent?: PermanentWorker;
+  permanentPhoto?: PhotoWorker;
 }

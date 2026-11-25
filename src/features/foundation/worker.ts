@@ -15,6 +15,9 @@ import { bindIntakeOriginals } from "./intake-originals";
 import { enqueueTestDeployment, readTestDeploymentRelease } from "./permanent-release";
 import { createPermanentStore, DeploymentUnavailable, recoverWorkerJobs } from "./permanent-store";
 
+import { photoKind } from "./photo-approval";
+import { bindTestPhotoWorker, hasUnsettledPhotoMint, retryPhotoJobs, type TestPhotoAdapters } from "./photo-store";
+
 const permanentModule: {
   handleJob: typeof permanentJobs.handleJob;
   createDeploymentReleaseSource?: () => TestDeploymentReleaseSource;
@@ -23,17 +26,20 @@ const permanent = permanentModule.handleJob;
 
 const handlers = new Map([["intake", intake], ["review", review], ["permanent", permanent], ["exports", exports]]);
 
-async function nextJob(db: PoolClient): Promise<JobInput | null> {
+async function nextJob(db: PoolClient, photoEnabled: boolean): Promise<JobInput | null> {
   const [row] = await queryRows<Pick<BusinessRow<"jobs">, "id" | "kind" | "schema_version" | "payload">>(db, `
     update jobs set status = 'running', updated_at = now()
-    where id = (select id from jobs where sample_run_id is null and status = 'queued'
+    where id = (select id from jobs where sample_run_id is null and status = 'queued' and ($1 or kind<>$2)
       order by created_at, id limit 1 for update skip locked)
     returning id, kind, schema_version, payload
-  `);
+  `, [photoEnabled, photoKind]);
   return row ? { jobId: row.id, kind: row.kind, schemaVersion: row.schema_version, payload: row.payload } : null;
 }
 
-export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSource) {
+export async function runWorker(
+  injectedReleaseSource?: TestDeploymentReleaseSource,
+  photoAdapters?: (connectionLost: AbortSignal) => TestPhotoAdapters,
+) {
   const env = readWorkerEnv();
   if (!env.WORKER_FILE_ROOT || !env.WORKER_FILE_ROOT.startsWith("/")) throw new Error("WORKER_FILE_ROOT");
   const root = env.WORKER_FILE_ROOT;
@@ -44,7 +50,13 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
   const lostConnection = new AbortController();
   process.once("SIGTERM", () => stop.abort());
   process.once("SIGINT", () => stop.abort());
-  connection.on("error", () => { healthy = false; lostConnection.abort(); stop.abort(); });
+  function abortConnection() {
+    healthy = false;
+    lostConnection.abort();
+    stop.abort();
+  }
+  connection.on("error", abortConnection);
+  connection.on("end", abortConnection);
   const notify = createNotifier(env);
   const blob = createBlobReader({ token: env.BLOB_READ_WRITE_TOKEN, storeHost: env.BLOB_STORE_HOST, mock: false, signal: lostConnection.signal });
   const context: WorkerContext = {
@@ -62,15 +74,23 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
   };
   try {
     await assertDatabaseIdentity(connection, role, schema);
+    const workerKey = "memorial-worker:" + schema;
     const lock = await connection.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock(hashtextextended($1,0)) as locked", ["memorial-worker:" + schema],
+      "select pg_try_advisory_lock(hashtextextended($1,0)) as locked", [workerKey],
     );
     if (!lock.rows[0]?.locked) throw new Error("Worker already running");
     const releaseSource = env.instance === "test"
       ? injectedReleaseSource ?? permanentModule.createDeploymentReleaseSource?.()
       : undefined;
+    const adapters = env.instance === "test"
+      ? await (photoAdapters ?? (await import("@/features/permanent/photo-bootstrap")).createTestPhotoAdapters)(lostConnection.signal)
+      : undefined;
+    const photo = adapters && bindTestPhotoWorker(connection, root, adapters, lostConnection.signal,
+      { workerKey, abort: abortConnection });
     const deployment = createPermanentStore(connection, env.instance,
-      releaseSource && (() => readTestDeploymentRelease(releaseSource)));
+      releaseSource && (() => readTestDeploymentRelease(releaseSource)),
+      env.instance === "test" ? () => hasUnsettledPhotoMint(connection) : undefined);
+    if (env.instance === "test") await retryPhotoJobs(connection, true);
     await recoverWorkerJobs(connection, env.instance);
     let nextReleaseCheck = 0;
     let nextHealthCheck = 0;
@@ -85,7 +105,8 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
           .catch(() => console.warn("测试部署发布核对失败"));
       }
       if (stop.signal.aborted) break;
-      const job = await nextJob(connection);
+      if (photo) await retryPhotoJobs(connection);
+      const job = await nextJob(connection, Boolean(photo));
       if (!job) {
         await delay(2000, undefined, { signal: stop.signal }).catch(() => undefined);
         continue;
@@ -115,7 +136,9 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
         await context.jobs.finish(job.jobId, failed ? "一项或多项原件校验失败" : undefined);
       } else {
         const handler = handlers.get(job.kind.split(".")[0] ?? "");
-        if (job.kind === permanentDeploymentKind) {
+        if (job.kind === photoKind && photo) {
+          await permanent(job, { ...context, permanentPhoto: photo.worker, files: { read: photo.read } });
+        } else if (job.kind === permanentDeploymentKind) {
           if (deployment) {
             try {
               await permanent(job, { ...context, permanent: { withDeployment: deployment.withDeployment } });

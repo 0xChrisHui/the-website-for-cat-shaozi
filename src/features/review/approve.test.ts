@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { approveSubmission, ReviewConflict } from "./approve";
+import { readReviewForm, testPhotoReview } from "./photo-decision";
 import { withdrawSubmission } from "./withdraw";
 import { displayKey } from "@/features/public/media-key";
 import type { ReviewItem } from "./store";
@@ -82,6 +83,56 @@ describe("manual confirmation", () => {
     const inserts = mocks.query.mock.calls.filter(([sql]) => sql.includes("insert into approvals"));
     expect(inserts).toHaveLength(1);
     expect(inserts[0]?.[1]).toEqual([itemId, versionId, true, false]);
+  });
+
+  it("writes the outbox binding and exact queue payload with the eligible manual approval", async () => {
+    current({ ...item, rights: { ...item.rights!, arweave: true } });
+    mocks.query.mockImplementation(async (sql: string) => sql.includes("insert into approvals")
+      ? { rows: [{ approved_at: new Date(approvedAt) }] }
+      : { rowCount: 1, rows: [] });
+    await approveSubmission({ ...input, decisions: [{ ...decision, arweave: true }] });
+    const inserts = mocks.query.mock.calls.filter(([sql]) => sql.includes("insert into"));
+    expect(inserts.map(([sql]) => /insert into (\w+)/.exec(sql)?.[1]))
+      .toEqual(["approvals", "test_photo_jobs", "jobs"]);
+    const [jobId] = inserts[1]?.[1] ?? [];
+    expect(inserts[1]?.[1]).toEqual([jobId, itemId, versionId]);
+    expect(inserts[2]?.[1]).toEqual([jobId, "permanent.archive-photo", { itemId }]);
+    expect(mocks.withWebsiteDb).toHaveBeenCalledOnce();
+  });
+
+  it("submits an explicit fixed recipient through the review form and binds its manual job", async () => {
+    const form = new FormData();
+    form.set("item", itemId + "/" + versionId);
+    form.set("public-" + itemId, "on");
+    const choice = "test-photo-" + itemId;
+    expect(readReviewForm(form)).toEqual([decision]);
+    const eligible = { ...item, rights: { ...item.rights!, arweave: true, nft: true } };
+    mocks.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("from site_settings")) return { rows: [{ value: {
+        archive: false, mint: false, recipientVersion: requestId,
+      } }] };
+      if (sql.includes("insert into approvals")) return { rows: [{ approved_at: new Date(approvedAt) }] };
+      return { rowCount: 1, rows: [] };
+    });
+
+    form.set(choice, submissionId);
+    current(eligible);
+    await expect(approveSubmission({ ...input, decisions: readReviewForm(form) })).rejects.toBeInstanceOf(ReviewConflict);
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("insert into approvals"))).toBe(false);
+
+    form.set(choice, requestId);
+    current(eligible);
+    await expect(approveSubmission({ ...input, decisions: readReviewForm(form) })).resolves.toMatchObject([{
+      source: "manual", arweave: true, nft: true, recipientConfigVersion: requestId,
+    }]);
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("insert into approvals"),
+      [itemId, versionId, true, false, true, requestId]);
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("insert into jobs"),
+      [expect.any(String), "permanent.archive-photo", { itemId }]);
+    expect(testPhotoReview("production", null)).toBe(false);
+    expect(testPhotoReview("preview", { runId: requestId })).toBe(false);
+    form.append(choice, "archive");
+    expect(() => readReviewForm(form)).toThrow();
   });
 
   it.each([

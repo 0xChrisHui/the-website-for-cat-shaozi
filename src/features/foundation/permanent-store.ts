@@ -1,3 +1,4 @@
+import { testSignerLock } from "./photo-store";
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { z } from "zod";
@@ -28,6 +29,7 @@ export function createPermanentStore(
   db: Pick<PoolClient, "query">,
   scope: "test" | "prod",
   readAuthorizedRelease?: () => Promise<TestDeploymentRelease | null>,
+  hasUnsettledMint?: () => Promise<boolean>,
 ) {
   if (scope !== "test") return undefined;
 
@@ -71,7 +73,7 @@ export function createPermanentStore(
       inUse = true;
       let locked = false;
       let active = false;
-      const lockKey = "memorial-permanent:memorial_test:op-sepolia";
+      const lockKey = testSignerLock;
       try {
         const { rows: [lock] } = await db.query<{ locked: boolean }>(
           "select pg_try_advisory_lock(hashtextextended($1,0)) as locked", [lockKey],
@@ -99,7 +101,10 @@ export function createPermanentStore(
         }
 
         let current = stored;
-        if (current.stage === "reserved") await assertAuthorized();
+        if (current.stage === "reserved") {
+          await assertAuthorized();
+          if (await hasUnsettledMint?.()) throw new DeploymentUnavailable("Test signer has an unsettled mint");
+        }
         async function persist(next: StoredReceipt) {
           if (!active) throw new Error("Deployment lock is no longer active");
           const result = await db.query(`
