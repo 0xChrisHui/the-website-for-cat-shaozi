@@ -230,7 +230,7 @@ describe("one-click inbox approval", () => {
     ]);
     const approvals = mocks.query.mock.calls.filter(([sql]) => sql.includes("insert into approvals"));
     expect(approvals.map(([, params]) => params)).toEqual([
-      [itemId, versionId, true, true], [secondId, secondVersion, true, true],
+      [itemId, versionId, true, true, "manual"], [secondId, secondVersion, true, true, "manual"],
     ]);
     expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("update current_export"));
     expect(mocks.query.mock.calls.some(([sql]) => sql.includes("insert into jobs") || sql.includes("test_photo_jobs"))).toBe(false);
@@ -323,5 +323,5 @@ it("approves an unaffected attachment while leaving a scoped ambiguity pending",
   inbox([firstPhoto, secondPhoto], [{ position: 3, exclusionQuote: "请先别用" }]);
   await approveInbox(submissionId, inboxBinding("2026-01-02/1111", null));
   const approvals = mocks.query.mock.calls.filter(([sql]) => sql.includes("insert into approvals"));
-  expect(approvals.map(([, params]) => params)).toEqual([[itemId, versionId, true, true]]);
+  expect(approvals.map(([, params]) => params)).toEqual([[itemId, versionId, true, true, "manual"]]);
 });

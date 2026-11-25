@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { mailRestrictions, restrictionFlags } from "@/features/intake/mail-restrictions";
@@ -7,7 +5,7 @@ import { normalizeIntakeDate } from "@/features/intake/normalize";
 import { displayJobKind, reviewDisplayBlob } from "@/features/intake/review-display";
 import { displayKey } from "@/features/public/media-key";
 import { readSiteEnv } from "@/lib/env";
-import type { ReviewItem } from "./store";
+import type { ReviewItem } from "./review-rows";
 
 const hintsSchema = z.object({
   commonDateHint: z.string().optional(),

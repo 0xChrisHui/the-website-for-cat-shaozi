@@ -3,6 +3,8 @@
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
+import { withWebsiteDb } from "@/lib/supabase/database";
+import { changeAutoApproval } from "@/features/review/auto-settings";
 import { sameOrigin } from "@/features/foundation/samples";
 import { approveInbox, approveSubmission, ReviewConflict } from "@/features/review/approve";
 import type { InboxBinding } from "@/features/review/inbox-policy";
@@ -107,4 +109,12 @@ export async function withdrawInbox(submissionId: string) {
     redirect("/maintain?status=conflict");
   }
   redirect("/maintain?status=withdrawn");
+}
+
+export async function setAutoApproval(enabled: boolean) {
+  if (!sameOrigin(await headers()) || typeof enabled !== "boolean") notFound();
+  const scope = await reviewScope();
+  if (!scope?.ready || scope.sample || (enabled && !scope.sender)) notFound();
+  await withWebsiteDb((db) => changeAutoApproval(db, enabled, scope.sender ?? ""));
+  redirect("/maintain");
 }

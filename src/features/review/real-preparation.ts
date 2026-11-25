@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { PoolClient } from "pg";
+import { lockExportScope } from "@/features/foundation/private-export";
 import { z } from "zod";
 import { displayBinding, displayJobKind } from "@/features/intake/review-display";
 import { displayKey } from "@/features/public/media-key";
@@ -24,6 +25,7 @@ export async function changeRealPreparation(submissionId: string, binding: unkno
   if (!scope?.ready || scope.sample || !z.uuid().safeParse(submissionId).success) throw new ReviewConflict();
   const { itemId, versionId } = displayBinding.parse(binding);
   return withWebsiteDb(async (db) => {
+    await lockExportScope(db, null);
     const submission = await findSubmission(db, scope, submissionId, true);
     if (!submission || !realPreparationEnabled(scope, submission.sender_hash)) throw new ReviewConflict();
     const items = await readReviewItems(db, submissionId, true);
@@ -96,6 +98,7 @@ export async function retryInboxDisplays(submissionId: string, binding: unknown,
   if (!scope?.ready || scope.sample || !z.uuid().safeParse(submissionId).success) throw new ReviewConflict();
   const versions = z.array(displayBinding).min(1).max(100).parse(binding);
   return withWebsiteDb(async (db) => {
+    await lockExportScope(db, null);
     const submission = await findSubmission(db, scope, submissionId, true);
     if (!submission || !realPreparationEnabled(scope, submission.sender_hash)) throw new ReviewConflict();
     const items = await readReviewItems(db, submissionId, true);
