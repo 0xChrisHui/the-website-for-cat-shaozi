@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import { ReviewInbox } from "./inbox";
 
-const scenario = vi.hoisted(() => ({ approved: false }));
+const scenario = vi.hoisted(() => ({ approved: false, auto: false }));
 const diaryText = "今天的日记第一段。\n\n今天的日记第二段。";
 
 const ids = vi.hoisted(() => ({
@@ -14,8 +14,9 @@ const ids = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("./actions", () => ({
-  confirmInbox: vi.fn(), retryInbox: vi.fn(), withdrawInbox: vi.fn(),
+  confirmInbox: vi.fn(), retryInbox: vi.fn(), setAutoApproval: vi.fn(), withdrawInbox: vi.fn(),
 }));
 vi.mock("@/features/review/store", () => ({
   inboxPageSize: 25,
@@ -35,7 +36,9 @@ vi.mock("@/features/review/store", () => ({
 }));
 vi.mock("@/lib/supabase/database", () => ({
   withWebsiteDb: (run: (db: object) => unknown) => run({
-    query: async (sql: string) => ({ rows: sql.includes("as hints") ? [{
+    query: async (sql: string) => ({ rows: sql.includes("from site_settings") && scenario.auto ? [{ version: 1,
+      value: { sender: "a".repeat(64), confirmedAt: "2026-11-25T00:00:00Z" },
+    }] : sql.includes("as hints") ? [{
       positions: [{ position: 0 }, { position: 1 }], automatic_display: true, status: "done",
       hints: { items: [{ position: 1, exclusionQuote: "第 2 张不要上链" }] },
     }] : [] }),
@@ -77,4 +80,17 @@ it("keeps diary text and sender restrictions out of a different sender scope", a
   }));
   expect(html).not.toContain(diaryText);
   expect(html).not.toContain("邮件限制：不上链");
+});
+
+it("shows the off state by default and lets a maintainer turn an active setting off", async () => {
+  const scope = { sample: null, ready: true, source: "stage0-grok", event: null, sender: "synthetic" };
+  const before = renderToStaticMarkup(await ReviewInbox({ scope }));
+  expect(before).toContain("自动批准 · 已关闭");
+  expect(before).toContain(">开启自动批准</button>");
+  scenario.auto = true;
+  try {
+    const after = renderToStaticMarkup(await ReviewInbox({ scope }));
+    expect(after).toContain("自动批准 · 已开启");
+    expect(after).toContain(">关闭自动批准</button>");
+  } finally { scenario.auto = false; }
 });

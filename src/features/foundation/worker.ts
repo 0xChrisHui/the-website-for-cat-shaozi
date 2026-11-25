@@ -8,6 +8,7 @@ import { readWorkerEnv } from "@/lib/env";
 import { assertDatabaseIdentity, queryRows, workerDatabase, type BusinessRow } from "@/lib/supabase/database";
 import { displayJobKind, prepareIntakeDisplays, prepareReviewDisplay, reviewDisplayBlob } from "@/features/intake/review-display";
 import { handleJob as intake } from "@/features/intake/jobs";
+import { createAutoApprover } from "@/features/review/auto-approve";
 import { handleJob as review } from "@/features/review/jobs";
 import * as permanentJobs from "@/features/permanent/jobs";
 import { privateExportBlob } from "@/features/exports/blob";
@@ -132,6 +133,10 @@ export async function runWorker(
     let nextReleaseCheck = 0;
     let nextHealthCheck = 0;
     let nextExportCleanup = 0;
+    let nextAutoReview = 0;
+    const autoApprove = exportToken && exportHost ? createAutoApprover(transaction, {
+      root, blob: reviewDisplayBlob(exportToken, exportHost), signal: photoSignal,
+    }) : undefined;
     while (!stop.signal.aborted) {
       if (Date.now() >= nextHealthCheck) {
         nextHealthCheck = Date.now() + 15 * 60 * 1000;
@@ -175,6 +180,11 @@ export async function runWorker(
         await transaction((db) => failExport(db, null, claim, uploadSettled));
       }
       if (photo) await retryPhotoJobs(connection);
+      if (stop.signal.aborted) break;
+      if (autoApprove && Date.now() >= nextAutoReview) {
+        nextAutoReview = Date.now() + 5000;
+        await autoApprove(connection);
+      }
       if (stop.signal.aborted) break;
       const claimed = await nextJob(connection, Boolean(photo), env.instance === "test");
       if (!claimed) {

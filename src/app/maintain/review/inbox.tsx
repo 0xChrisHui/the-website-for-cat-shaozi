@@ -3,7 +3,8 @@ import { readRealPreparation } from "@/features/review/mail-preparation";
 import { inboxPlan } from "@/features/review/inbox-policy";
 import { canPublish, inboxPageSize, readInboxSubmissions, readReviewItems, type ReviewScope } from "@/features/review/store";
 import { withWebsiteDb } from "@/lib/supabase/database";
-import { confirmInbox, retryInbox, withdrawInbox } from "./actions";
+import { readAutoApproval } from "@/features/review/auto-settings";
+import { confirmInbox, retryInbox, setAutoApproval, withdrawInbox } from "./actions";
 import { InboxButton, InboxPreview, RefreshInbox } from "./inbox-controls";
 
 const receivedTime = new Intl.DateTimeFormat("zh-CN", {
@@ -18,7 +19,7 @@ const messages: Record<string, string> = {
 
 export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewScope; status?: string; page?: number }) {
   if (!scope.ready) return <p role="status">审核数据库暂不可用。</p>;
-  const { entries, morePending } = await withWebsiteDb(async (db) => {
+  const { entries, morePending, autoApproval } = await withWebsiteDb(async (db) => {
     const rows = await readInboxSubmissions(db, scope, page);
     const morePending = rows.filter(({ pending }) => pending).length > inboxPageSize;
     const visible = morePending ? rows.filter(({ pending }, index) => !pending || index < inboxPageSize) : rows;
@@ -28,7 +29,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
       const setup = await readRealPreparation(db, row.id, row.received_at);
       entries.push({ row, items, setup, allowed: Boolean(scope.sender && row.sender_hash === scope.sender) });
     }
-    return { entries, morePending };
+    return { entries, morePending, autoApproval: await readAutoApproval(db) };
   });
   const active = entries.some(({ setup, items }) => setup.active || items.some((item) => {
     const status = setup.job(item.id, item.version_id)?.status;
@@ -71,6 +72,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
             {item.withdrawn_at ? <p>已撤下</p> : item.approval ? <p>
               {item.approval.published && canPublish(item, false) ? "已发布" : "已审核 · 私有"}
             </p> : item.historical_approval ? <p>有历史审核记录</p> : null}
+            {allowed && item.approval?.source === "automatic" && !item.withdrawn_at && <p>自动批准</p>}
             {allowed && <>
               {item.exclusion !== "none" && <p>保留已有排除记录</p>}
               {restrictions.uncertain && <p>邮件限制或照片范围不明确，需核对</p>}
@@ -118,7 +120,13 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
   const pending = entries.filter(({ row }) => row.pending);
   const reviewed = entries.filter(({ row }) => !row.pending);
   return <>
-    {active && <RefreshInbox />}
+    {(active || (autoApproval && pending.length > 0)) && <RefreshInbox />}
+    <form action={setAutoApproval.bind(null, !autoApproval)} className="space-y-2 rounded-lg border border-border p-4">
+      <p className="font-semibold">自动批准 · {autoApproval ? "已开启" : "已关闭"}</p>
+      <p className="text-sm">开启后，符合要求的积压和新投稿会自动批准，并按邮件中的限制发布。发件人地址可能被冒用。</p>
+      {(autoApproval || scope.sender) && <InboxButton
+        label={autoApproval ? "关闭自动批准" : "开启自动批准"} pendingLabel="正在保存…" />}
+    </form>
     {status && Object.hasOwn(messages, status) && <p role="status">{messages[status]}</p>}
     <section className="space-y-3" aria-labelledby="pending-heading">
       <h2 id="pending-heading" className="font-heading text-xl font-semibold">待审核投稿</h2>
