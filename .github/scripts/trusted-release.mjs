@@ -230,6 +230,28 @@ const approvedFoundationRepairs = new Map([
       "src/app/maintain/review/inbox.tsx",
     ],
   }],
+  [51, {
+    branch: "fix/memorial-2501",
+    reviewedBase: "29a2902e00b72a6ea6309de2f4f887b7181d4ecb",
+    reviewedHead: "affc3eb359745ced1e7bb2875ed364532144c207",
+    paths: [
+      "src/app/maintain/review/actions.ts",
+      "src/app/maintain/review/inbox.test.ts",
+      "src/app/maintain/review/inbox.tsx",
+      "src/features/foundation/private-export.ts",
+      "src/features/foundation/worker.ts",
+      "src/features/review/approve.test.ts",
+      "src/features/review/approve.ts",
+      "src/features/review/auto-approve.ts",
+      "src/features/review/auto-settings.ts",
+      "src/features/review/inbox-write.ts",
+      "src/features/review/mail-preparation.ts",
+      "src/features/review/real-preparation.ts",
+      "src/features/review/review-rows.ts",
+      "src/features/review/store.ts",
+      "supabase/migrations/20261125150000_memorial_auto_approval.sql",
+    ],
+  }],
 ]);
 
 function isApprovedFoundationRepair(pr, parent, merged) {
