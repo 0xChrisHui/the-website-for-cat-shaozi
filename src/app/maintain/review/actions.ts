@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { sameOrigin } from "@/features/foundation/samples";
 import { approveSubmission, ReviewConflict } from "@/features/review/approve";
+import { readReviewForm } from "@/features/review/photo-decision";
 import { prepareReviewSample } from "@/features/review/sample";
 import { reviewScope } from "@/features/review/store";
 import { withdrawSubmission } from "@/features/review/withdraw";
@@ -26,13 +27,7 @@ export async function confirmReview(submissionId: string, requestId: string, for
   try {
     await approveSubmission({
       submissionId, requestId,
-      decisions: form.getAll("item").map((value) => {
-        if (typeof value !== "string") throw new ReviewConflict();
-        if (!/^[-a-f0-9]+\/[-a-f0-9]+$/i.test(value)) throw new ReviewConflict();
-        const [itemId, versionId] = value.split("/");
-        if (!itemId || !versionId) throw new ReviewConflict();
-        return { itemId, versionId, publicView: form.get("public-" + itemId) === "on", arweave: false, nft: false };
-      }),
+      decisions: readReviewForm(form),
     });
   } catch (error) {
     if (!(error instanceof ReviewConflict || error instanceof z.ZodError)) throw error;

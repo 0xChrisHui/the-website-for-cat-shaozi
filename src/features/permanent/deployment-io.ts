@@ -1,9 +1,10 @@
 import { request } from "node:http";
 import {
-  createPublicClient, http, parseAbi, TransactionNotFoundError, TransactionReceiptNotFoundError,
+  BaseError, ContractFunctionRevertedError, createPublicClient, http, parseAbi, TransactionNotFoundError, TransactionReceiptNotFoundError,
   type Address, type Hash, type Hex, type TransactionReceipt, type TransactionSerializableEIP1559,
 } from "viem";
 import { optimismSepolia } from "viem/chains";
+import { mintAbi, type MintRpc } from "./mint";
 import { rawHex, signerAvailable, signerSocket } from "./deployment-release";
 
 const gasOracle = {
@@ -18,11 +19,27 @@ const permissionsAbi = parseAbi(["function owner() view returns (address)", "fun
 export type DeploymentChainReceipt = Pick<TransactionReceipt,
   "transactionHash" | "from" | "to" | "status" | "contractAddress" | "blockNumber">;
 
-export function createDeploymentRpc(url: string) {
-  const client = createPublicClient({
+function deploymentClient(url: string, signal?: AbortSignal) {
+  return createPublicClient({
     chain: optimismSepolia, cacheTime: 0,
-    transport: http(url, { retryCount: 0, timeout: 4000, fetchOptions: { redirect: "error" } }),
+    transport: http(url, { retryCount: 0, timeout: 4000, fetchOptions: { redirect: "error", signal } }),
   });
+}
+
+export function createDeploymentReadRpc(url: string, signal?: AbortSignal) {
+  const client = deploymentClient(url, signal);
+  return {
+    chainId: () => client.getChainId(),
+    transaction: (hash: Hash) => client.getTransaction({ hash }),
+    receipt: (hash: Hash) => client.getTransactionReceipt({ hash }),
+    code: (address: Address, blockNumber?: bigint) => client.getCode({ address, blockNumber }),
+    permission: (address: Address, functionName: "owner" | "minter", blockNumber?: bigint) =>
+      client.readContract({ address, abi: permissionsAbi, functionName, blockNumber }),
+  };
+}
+
+export function createDeploymentRpc(url: string, signal?: AbortSignal) {
+  const client = deploymentClient(url, signal);
   return {
     chainId: () => client.getChainId(),
     nonce: (address: Address, blockTag: "latest" | "pending") => client.getTransactionCount({ address, blockTag }),
@@ -57,6 +74,51 @@ export function createDeploymentRpc(url: string) {
     permission: (address: Address, functionName: "owner" | "minter", blockNumber: bigint) =>
       client.readContract({ address, abi: permissionsAbi, functionName, blockNumber }),
     send: (serializedTransaction: `0x02${string}`) => client.sendRawTransaction({ serializedTransaction }),
+  };
+}
+
+export function createPhotoMintRpc(url: string, signal: AbortSignal): MintRpc {
+  const client = deploymentClient(url, signal);
+  const common = createDeploymentRpc(url, signal);
+  const tokenAbi = [...mintAbi, ...parseAbi(["error ERC721NonexistentToken(uint256 tokenId)"])] as const;
+  return {
+    ...common,
+    async code(address, block) { return await common.code(address, block) ?? "0x"; },
+    minter: (address) => client.readContract({ address, abi: permissionsAbi, functionName: "minter" }),
+    async receipt(hash) {
+      try {
+        return await client.getTransactionReceipt({ hash });
+      } catch (error) {
+        if (error instanceof TransactionReceiptNotFoundError) return null;
+        throw error;
+      }
+    },
+    async token(address, id, blockNumber) {
+      const query = { address, abi: tokenAbi, args: [id], blockNumber } as const;
+      let owner;
+      try {
+        owner = await client.readContract({ ...query, functionName: "ownerOf" });
+      } catch (error) {
+        if (error instanceof BaseError && error.walk((cause) =>
+          cause instanceof ContractFunctionRevertedError &&
+          cause.data?.errorName === "ERC721NonexistentToken" && cause.data.args?.[0] === id
+        ) instanceof ContractFunctionRevertedError) return null;
+        throw error;
+      }
+      return { owner, uri: await client.readContract({ ...query, functionName: "tokenURI" }) };
+    },
+    async fees() {
+      const { maxFeePerGas, maxPriorityFeePerGas } = await common.fees();
+      return { maxFeePerGas, maxPriorityFeePerGas };
+    },
+    async simulate({ from: account, ...call }) {
+      await client.call({ account, ...call, blockTag: "pending" });
+      return client.estimateGas({ account, ...call, blockTag: "pending" });
+    },
+    send(raw) {
+      signal.throwIfAborted();
+      return client.sendRawTransaction({ serializedTransaction: raw });
+    },
   };
 }
 

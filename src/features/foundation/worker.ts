@@ -19,6 +19,9 @@ import {
 } from "./private-export";
 import { createPermanentStore, DeploymentUnavailable, recoverWorkerJobs } from "./permanent-store";
 
+import { photoKind } from "./photo-approval";
+import { bindTestPhotoWorker, hasUnsettledPhotoMint, retryPhotoJobs, type TestPhotoAdapters } from "./photo-store";
+
 const permanentModule: {
   handleJob: typeof permanentJobs.handleJob;
   createDeploymentReleaseSource?: () => TestDeploymentReleaseSource;
@@ -27,17 +30,23 @@ const permanent = permanentModule.handleJob;
 
 const handlers = new Map([["intake", intake], ["review", review], ["permanent", permanent], ["exports", exports]]);
 
-async function nextJob(db: PoolClient): Promise<JobInput | null> {
-  const [row] = await queryRows<Pick<BusinessRow<"jobs">, "id" | "kind" | "schema_version" | "payload">>(db, `
-    update jobs set status = 'running', updated_at = now()
-    where id = (select id from jobs where sample_run_id is null and status = 'queued' and kind <> $1
+async function nextJob(db: PoolClient, photoEnabled: boolean): Promise<{ job: JobInput; claimedAt: string } | null> {
+  const [row] = await queryRows<Pick<BusinessRow<"jobs">, "id" | "kind" | "schema_version" | "payload"> & { claimed_at: string }>(db, `
+    update jobs set status = 'running', updated_at = case when kind=$2 then clock_timestamp() else now() end
+    where id = (select id from jobs where sample_run_id is null and status = 'queued' and kind <> $3 and ($1 or kind<>$2)
       order by created_at, id limit 1 for update skip locked)
-    returning id, kind, schema_version, payload
-  `, [privateExportKind]);
-  return row ? { jobId: row.id, kind: row.kind, schemaVersion: row.schema_version, payload: row.payload } : null;
+    returning id, kind, schema_version, payload, updated_at::text as claimed_at
+  `, [photoEnabled, photoKind, privateExportKind]);
+  return row ? {
+    job: { jobId: row.id, kind: row.kind, schemaVersion: row.schema_version, payload: row.payload },
+    claimedAt: row.claimed_at,
+  } : null;
 }
 
-export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSource) {
+export async function runWorker(
+  injectedReleaseSource?: TestDeploymentReleaseSource,
+  photoAdapters?: (outboundSignal: AbortSignal) => TestPhotoAdapters,
+) {
   const env = readWorkerEnv();
   if (!env.WORKER_FILE_ROOT || !env.WORKER_FILE_ROOT.startsWith("/")) throw new Error("WORKER_FILE_ROOT");
   const root = env.WORKER_FILE_ROOT;
@@ -46,9 +55,16 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
   let healthy = true;
   const stop = new AbortController();
   const lostConnection = new AbortController();
+  const photoSignal = AbortSignal.any([lostConnection.signal, stop.signal]);
   process.once("SIGTERM", () => stop.abort());
   process.once("SIGINT", () => stop.abort());
-  connection.on("error", () => { healthy = false; lostConnection.abort(); stop.abort(); });
+  function abortConnection() {
+    healthy = false;
+    lostConnection.abort();
+    stop.abort();
+  }
+  connection.on("error", abortConnection);
+  connection.on("end", abortConnection);
   const notify = createNotifier(env);
   const blob = createBlobReader({ token: env.BLOB_READ_WRITE_TOKEN, storeHost: env.BLOB_STORE_HOST, mock: false, signal: lostConnection.signal });
   const context: WorkerContext = {
@@ -86,17 +102,25 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
 
   try {
     await assertDatabaseIdentity(connection, role, schema);
+    const workerKey = "memorial-worker:" + schema;
     const lock = await connection.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock(hashtextextended($1,0)) as locked", ["memorial-worker:" + schema],
+      "select pg_try_advisory_lock(hashtextextended($1,0)) as locked", [workerKey],
     );
     if (!lock.rows[0]?.locked) throw new Error("Worker already running");
     const releaseSource = env.instance === "test"
       ? injectedReleaseSource ?? permanentModule.createDeploymentReleaseSource?.()
       : undefined;
+    const adapters = env.instance === "test"
+      ? await (photoAdapters ?? (await import("@/features/permanent/photo-bootstrap")).createTestPhotoAdapters)(photoSignal)
+      : undefined;
+    const photo = adapters && bindTestPhotoWorker(connection, root, adapters, lostConnection.signal,
+      { workerKey, abort: abortConnection }, stop.signal);
     const deployment = createPermanentStore(connection, env.instance,
-      releaseSource && (() => readTestDeploymentRelease(releaseSource)));
+      releaseSource && (() => readTestDeploymentRelease(releaseSource)),
+      env.instance === "test" ? () => hasUnsettledPhotoMint(connection) : undefined);
     await transaction(async (db) => {
       await lockExportScope(db, null);
+      if (env.instance === "test") await retryPhotoJobs(db, true);
       await recoverWorkerJobs(db, env.instance);
     });
     let nextReleaseCheck = 0;
@@ -144,11 +168,14 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
         // A committed publish survives even when the handler did not receive its response.
         await transaction((db) => failExport(db, null, claim, uploadSettled));
       }
-      const job = await nextJob(connection);
-      if (!job) {
+      if (photo) await retryPhotoJobs(connection);
+      if (stop.signal.aborted) break;
+      const claimed = await nextJob(connection, Boolean(photo));
+      if (!claimed) {
         await delay(2000, undefined, { signal: stop.signal }).catch(() => undefined);
         continue;
       }
+      const { job, claimedAt } = claimed;
       if (job.schemaVersion !== 1) {
         await context.jobs.finish(job.jobId, "不支持的任务版本");
       } else if (job.kind === "foundation.intake") {
@@ -174,7 +201,27 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
         await context.jobs.finish(job.jobId, failed ? "一项或多项原件校验失败" : undefined);
       } else {
         const handler = handlers.get(job.kind.split(".")[0] ?? "");
-        if (job.kind === permanentDeploymentKind) {
+        if (job.kind === photoKind && photo) {
+          try {
+            await permanent(job, {
+              ...context,
+              permanentPhoto: {
+                ...photo.worker,
+                withPhoto: (id, item, run) => photo.worker.withPhoto(id, item, run, claimedAt),
+              },
+              files: { read: photo.read },
+              jobs: { async finish(id, reason) {
+                if (!healthy) throw new Error("Worker connection lost");
+                await connection.query(`
+                  update jobs set status=$2, reason=$3, updated_at=now()
+                  where id=$1 and status='running' and updated_at=$4::timestamptz and sample_run_id is null
+                `, [id, reason ? "needs_attention" : "done", reason ?? null, claimedAt]);
+              } },
+            });
+          } catch (error) {
+            if (!healthy || !stop.signal.aborted) throw error;
+          }
+        } else if (job.kind === permanentDeploymentKind) {
           if (deployment) {
             try {
               await permanent(job, { ...context, permanent: { withDeployment: deployment.withDeployment } });

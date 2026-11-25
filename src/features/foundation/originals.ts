@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, mkdir, open, rm } from "node:fs/promises";
+import { link, mkdir, open, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
 import type { FileRef } from "@/lib/contracts/intake";
@@ -66,5 +66,33 @@ export async function saveOriginal(
     }
   } finally {
     await rm(temp, { force: true });
+  }
+}
+
+/** Read and authenticate the same file descriptor before exposing any bytes. */
+export async function readCheckedOriginal(root: string, file: FileRef) {
+  const [, submission, position] = /^([0-9a-f-]{36})\/(0|[1-9][0-9]?)$/.exec(file.objectKey) ?? [];
+  if (!submission || !position) throw new Error("Invalid original key");
+  const directory = join(root, submission);
+  // The worker owns the root. Reject a symlink in the per-submission directory.
+  if (await realpath(directory) !== join(await realpath(root), submission)) throw new Error("Original directory changed");
+  const handle = await open(join(directory, position), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size !== file.sizeBytes) throw new Error("Original length");
+    const bytes = Buffer.alloc(file.sizeBytes + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const content = bytes.subarray(0, length);
+    if (length !== file.sizeBytes || createHash("sha256").update(content).digest("hex") !== file.sha256) {
+      throw new Error("Original integrity");
+    }
+    return new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(content); controller.close(); } });
+  } finally {
+    await handle.close();
   }
 }

@@ -4,6 +4,9 @@ import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { createPublicSampleTicket, sampleSecret } from "@/features/foundation/samples";
+import { readPhotoSettings } from "@/features/foundation/photo-approval";
+import { testPhotoReview } from "@/features/review/photo-decision";
+import { readSiteEnv } from "@/lib/env";
 import { canPublish, findSubmission, readReviewItems, reviewScope } from "@/features/review/store";
 import { withWebsiteDb } from "@/lib/supabase/database";
 import { confirmReview, withdrawReview } from "../actions";
@@ -17,14 +20,20 @@ export default async function ReviewDetail({ params, searchParams }: {
   const { submissionId } = await params;
   if (!scope.ready || !z.uuid().safeParse(submissionId).success) notFound();
 
+  const testPhoto = testPhotoReview(readSiteEnv().environment, scope.sample);
   const detail = await withWebsiteDb(async (db) => {
     const submission = await findSubmission(db, scope, submissionId);
-    return submission && { submission, items: await readReviewItems(db, submissionId) };
+    if (!submission) return null;
+    const items = await readReviewItems(db, submissionId);
+    const archival = testPhoto && submission.sender_hash === scope.sender &&
+      items.some((item) => !item.approval && item.kind === "photo" && item.rights?.arweave && canPublish(item, false));
+    const recipientVersion = archival ? (await readPhotoSettings(db))?.recipientVersion : null;
+    return { submission, items, recipientVersion };
   });
   if (!detail) notFound();
 
   const { status } = await searchParams;
-  const { submission, items } = detail;
+  const { submission, items, recipientVersion } = detail;
   const senderAllowed = Boolean(scope.sender && submission.sender_hash === scope.sender);
   const pending = senderAllowed && items.some((item) => !item.approval && !item.withdrawn_at);
   const secret = sampleSecret();
@@ -54,6 +63,15 @@ export default async function ReviewDetail({ params, searchParams }: {
               <input type="hidden" name="item" value={item.id + "/" + item.version_id} />
               {publishable ? <label><input type="checkbox" name={"public-" + item.id} /> 站内发布</label>
                 : <p>当前条目缺少发布授权、日期或展示内容。</p>}
+              {testPhoto && publishable && item.kind === "photo" && item.rights?.arweave && <label className="block">
+                测试永久操作（须勾选站内发布）{" "}
+                <select className="rounded border bg-background p-1" name={"test-photo-" + item.id}>
+                  <option value="">无</option>
+                  <option value="archive">仅测试归档</option>
+                  {item.rights.nft && recipientVersion &&
+                    <option value={recipientVersion}>测试归档并铸造到已批准的固定接收方</option>}
+                </select>
+              </label>}
             </>}
         </fieldset>;
       })}
