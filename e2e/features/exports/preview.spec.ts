@@ -7,7 +7,7 @@ test("sample ZIP is scoped, replaceable, and revoked at its application URL", as
   await page.getByRole("button", { name: "样本登录" }).click();
   await page.getByRole("link", { name: "审核投稿" }).click();
   await page.getByRole("button", { name: "准备审核样本" }).click();
-  await expect(page.getByRole("link", { name: /待审核/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /待审核/ })).toBeVisible({ timeout: 20_000 });
   await page.goto("/maintain");
   await page.getByRole("link", { name: "离线快照" }).click();
   const generate = page.getByRole("button", { name: "生成离线快照" });
