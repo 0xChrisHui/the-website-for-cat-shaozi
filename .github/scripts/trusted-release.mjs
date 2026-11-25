@@ -63,6 +63,31 @@ const approvedFoundationRepairs = new Map([
       "src/lib/contracts/intake.ts",
     ],
   }],
+  [33, {
+    branch: "ops/f3-permanent-foundation",
+    reviewedBase: "c4733a12fba953a8eececc954cc613a7d1b52462",
+    reviewedHead: "713ae2b1e72eca7bac06175cbf5e92ce074d443c",
+    paths: [
+      "src/features/foundation/permanent-release.test.ts",
+      "src/features/foundation/permanent-release.ts",
+      "src/features/foundation/permanent-store.test.ts",
+      "src/features/foundation/permanent-store.ts",
+      "src/features/foundation/worker.ts",
+      "src/lib/contracts/jobs.ts",
+      "src/lib/contracts/permanent.ts",
+      "src/lib/contracts/review.ts",
+      "supabase/tests/foundation-test-deployment.mjs",
+    ],
+  }],
+  [36, {
+    branch: "ops/f3-intake-diary-persistence",
+    reviewedBase: "c4733a12fba953a8eececc954cc613a7d1b52462",
+    reviewedHead: "f7bb4fd17ff17d3103d5ba889338d99be3bff841",
+    paths: [
+      "src/features/foundation/intake.test.ts",
+      "src/features/foundation/intake.ts",
+    ],
+  }],
 ]);
 
 function isApprovedFoundationRepair(pr, parent, merged) {
