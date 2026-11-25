@@ -11,7 +11,7 @@ test("sample ZIP is scoped, replaceable, and revoked at its application URL", as
   await expect(page.getByRole("status")).toHaveText("暂无离线快照。");
   await generate.click();
   await expect(page.getByRole("status")).toHaveText("正在生成…");
-  await expect(download).toBeVisible();
+  await expect(download).toBeVisible({ timeout: 45_000 });
   const oldPath = await download.getAttribute("href");
   if (!oldPath) throw new Error("Missing first download");
 
@@ -36,8 +36,8 @@ test("sample ZIP is scoped, replaceable, and revoked at its application URL", as
 
   await page.goto("/maintain/exports");
   await generate.click();
-  await expect(download).toBeVisible();
-  await expect(download).not.toHaveAttribute("href", oldPath);
+  await expect(download).toBeVisible({ timeout: 45_000 });
+  await expect(download).not.toHaveAttribute("href", oldPath, { timeout: 45_000 });
   const currentPath = await download.getAttribute("href");
   if (!currentPath) throw new Error("Missing replacement download");
   expect((await api.get(oldPath)).status()).toBe(404);

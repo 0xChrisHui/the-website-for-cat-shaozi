@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { type Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -44,7 +44,9 @@ async function preparePhoto(source: ExportPhotoSource, stream: Readable, directo
       throw new Error("Approved original integrity mismatch");
     }
     signal.throwIfAborted();
-    const image = sharp(input, { limitInputPixels: 100_000_000 });
+    // Sharp can retain an open handle to file-backed inputs on Windows.
+    const imageInput = process.platform === "win32" ? await readFile(input, { signal }) : input;
+    const image = sharp(imageInput, { limitInputPixels: 100_000_000 });
     const formats = { "image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp", "image/heic": "heif", "image/heif": "heif" };
     if ((await image.metadata()).format !== (expected ? formats[expected.mediaType] : "webp")) {
       throw new Error("Approved photo format mismatch");
