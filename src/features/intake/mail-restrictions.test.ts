@@ -52,3 +52,11 @@ it("recognizes the sender's single-photo no-chain wording without suppressing di
   expect(bound(1).chain).toBe(true);
   expect(mailRestrictions([0, 1], [{ quote }])(0).uncertain).toBe(true);
 });
+
+it.each(["第二张图片不要上链", "对了，第二张图片不要上链", "对了，第二张照片不要上链"])(
+  "applies the sender's explicit restriction to the second photo only (%s)", (quote) => {
+    const read = mailRestrictions([0, 1], [{ quote }]);
+    expect([read(0), read(1), read(2)].map(({ chain, uncertain }) => [chain, uncertain]))
+      .toEqual([[false, false], [true, false], [false, false]]);
+  },
+);
