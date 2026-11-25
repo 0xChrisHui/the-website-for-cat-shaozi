@@ -13,7 +13,7 @@ export default async function MaintainPage() {
 
   const diagnostics = diagnosticsEnabled();
   const links = maintainNavigation.filter(({ flag, path }) =>
-    flag.delivered || (diagnostics && path === "/maintain/intake"),
+    flag.delivered || path === "/maintain/review" || (diagnostics && path === "/maintain/intake"),
   );
 
   return (
