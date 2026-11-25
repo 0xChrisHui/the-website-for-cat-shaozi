@@ -63,6 +63,49 @@ export type Database = {
           "singleton"?: boolean;
         };
       };
+      "item_usage_rights": {
+        Row: {
+          "arweave": boolean;
+          "item_id": string;
+          "nft": boolean;
+          "private_export": boolean;
+          "public_view": boolean;
+        };
+        Insert: {
+          "arweave"?: boolean;
+          "item_id": string;
+          "nft"?: boolean;
+          "private_export"?: boolean;
+          "public_view"?: boolean;
+        };
+        Update: {
+          "arweave"?: boolean;
+          "item_id"?: string;
+          "nft"?: boolean;
+          "private_export"?: boolean;
+          "public_view"?: boolean;
+        };
+      };
+      "item_version_display": {
+        Row: {
+          "caption": string | null;
+          "processed_media_ref": string | null;
+          "title": string | null;
+          "version_id": string;
+        };
+        Insert: {
+          "caption"?: string | null;
+          "processed_media_ref"?: string | null;
+          "title"?: string | null;
+          "version_id": string;
+        };
+        Update: {
+          "caption"?: string | null;
+          "processed_media_ref"?: string | null;
+          "title"?: string | null;
+          "version_id"?: string;
+        };
+      };
       "item_versions": {
         Row: {
           "diary_text": string | null;
