@@ -1,5 +1,6 @@
-import type { JobInput, WorkerContext } from "@/lib/contracts/jobs";
+import type { JobInput } from "@/lib/contracts/jobs";
 import { permanentDeploymentKind, type TestDeploymentReleaseSource } from "@/lib/contracts/permanent";
+import { executePhotoJob, photoJobKind, type PhotoContext } from "./execute";
 import { executeDeployment, waitForDeployment } from "./deploy";
 import { createDeploymentRpc, signDeployment } from "./deployment-io";
 import { readDeploymentConfig } from "./deployment-release";
@@ -21,7 +22,11 @@ export function createDeploymentReleaseSource(): TestDeploymentReleaseSource {
   };
 }
 
-export async function handleJob(job: JobInput, context: WorkerContext): Promise<void> {
+export async function handleJob(job: JobInput, context: PhotoContext): Promise<void> {
+  if (job.kind === photoJobKind) {
+    await executePhotoJob(job, context);
+    return;
+  }
   if (job.kind !== permanentDeploymentKind || job.schemaVersion !== 1 || !context.permanent) {
     await context.jobs.finish(job.jobId, "处理器尚未交付");
     return;
