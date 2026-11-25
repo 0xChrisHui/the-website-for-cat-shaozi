@@ -9,7 +9,7 @@ nodes:
     command: "bash .ai/bin/delivery.sh scope module"
   - id: "setup"
     type: "check"
-    command: "bash .ai/bin/setup-worktree.sh integration"
+    command: "bash .ai/bin/setup-worktree.sh ."
   - id: "implement"
     type: "agent"
     runner: "codex"
