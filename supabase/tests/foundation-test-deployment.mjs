@@ -10,7 +10,7 @@ import { safeMigration } from "../../.github/scripts/migrate-schema.mjs";
 const cluster = mkdtempSync(join(tmpdir(), "foundation-deployment-"));
 const data = join(cluster, "data");
 const bin = process.env.F3_PG_BIN;
-const migration = "20261125030000_foundation_test_deployment.sql";
+const migration = "20261125030000_permanent_test_deployment.sql";
 const server = process.argv.includes("--server");
 let started = false;
 const foundation = "20261124120000_foundation_schema.sql";
