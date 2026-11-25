@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PermanentWorker } from "./permanent";
 
 export const jobStatus = z.enum(["queued", "running", "done", "needs_attention"]);
 export const jobSummarySchema = z.object({
@@ -16,4 +17,5 @@ export interface WorkerContext {
   files: { read(objectKey: string): Promise<ReadableStream<Uint8Array>> };
   jobs: { finish(jobId: string, reason?: string): Promise<void> };
   clock: () => Date;
+  permanent?: PermanentWorker;
 }
