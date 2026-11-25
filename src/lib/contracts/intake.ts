@@ -27,6 +27,7 @@ export const intakeEventSchema = z.object({
   sourceProof: z.string().max(512).optional(),
   inReplyToId: z.string().max(256).optional(),
   commonDateHint: z.string().max(160).optional(),
+  restrictionQuotes: z.array(z.string().trim().min(1).max(512)).max(20).optional(),
   items: z.array(z.object({
     kind: z.enum(["photo", "diary"]), position: z.number().int().min(0).max(99),
     dateHint: z.string().max(160).optional(), exclusionQuote: z.string().max(512).optional(),

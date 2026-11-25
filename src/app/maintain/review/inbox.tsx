@@ -1,0 +1,138 @@
+import Link from "next/link";
+import { readRealPreparation } from "@/features/review/mail-preparation";
+import { inboxPlan } from "@/features/review/inbox-policy";
+import { canPublish, inboxPageSize, readInboxSubmissions, readReviewItems, type ReviewScope } from "@/features/review/store";
+import { withWebsiteDb } from "@/lib/supabase/database";
+import { confirmInbox, retryInbox, withdrawInbox } from "./actions";
+import { InboxButton, InboxPreview, RefreshInbox } from "./inbox-controls";
+
+const receivedTime = new Intl.DateTimeFormat("zh-CN", {
+  dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai",
+});
+const messages: Record<string, string> = {
+  confirmed: "已确认审核。",
+  conflict: "操作未保存。请核对当前版本、投稿状态和预览后重试。",
+  preparing: "已请求准备预览。",
+  withdrawn: "投稿已撤下。",
+};
+
+export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewScope; status?: string; page?: number }) {
+  if (!scope.ready) return <p role="status">审核数据库暂不可用。</p>;
+  const { entries, morePending } = await withWebsiteDb(async (db) => {
+    const rows = await readInboxSubmissions(db, scope, page);
+    const morePending = rows.filter(({ pending }) => pending).length > inboxPageSize;
+    const visible = morePending ? rows.filter(({ pending }, index) => !pending || index < inboxPageSize) : rows;
+    const entries = [];
+    for (const row of visible) {
+      const items = await readReviewItems(db, row.id);
+      const setup = await readRealPreparation(db, row.id, row.received_at);
+      entries.push({ row, items, setup, allowed: Boolean(scope.sender && row.sender_hash === scope.sender) });
+    }
+    return { entries, morePending };
+  });
+  const active = entries.some(({ setup, items }) => setup.active || items.some((item) => {
+    const status = setup.job(item.id, item.version_id)?.status;
+    return status === "queued" || status === "running";
+  }));
+
+  function card({ row, items, setup, allowed }: (typeof entries)[number]) {
+    const live = items.filter((item) => !item.withdrawn_at);
+    const candidates = allowed && setup.found && !setup.active
+      ? live.filter((item) => inboxPlan(item, setup.metadata(item.position))) : [];
+    const photos = candidates.filter(({ kind, exclusion }) => kind === "photo" && exclusion === "none");
+    const waiting = photos.some((item) => {
+      const state = setup.job(item.id, item.version_id)?.status;
+      return state === "queued" || state === "running";
+    });
+    const needsDisplay = photos.some((item) => {
+      const rights = inboxPlan(item, setup.metadata(item.position));
+      return (rights?.publicView || rights?.privateExport) && !setup.displayReady(item);
+    });
+    const canWithdraw = live.some((item) => item.approval);
+    const photoCount = Math.max(setup.photoCount, items.filter(({ kind }) => kind === "photo").length);
+    return <li key={row.id} className="space-y-3 rounded-lg border border-border p-4">
+      <p className="font-semibold"><time dateTime={row.received_at.toISOString()}>{receivedTime.format(row.received_at)}</time>
+        {" · "}{photoCount} 张照片</p>
+      {!allowed && <p>发件人未通过校验。</p>}
+      {setup.active && <p role="status">正在接收原件并准备私有预览…</p>}
+      {setup.status === "needs_attention" && <p role="status">部分原件或预览准备失败。已接收的条目如下。</p>}
+      <ul className="grid gap-4 sm:grid-cols-2">
+        {items.map((item) => {
+          const photo = item.kind === "photo";
+          const number = setup.photoNumber(item.position) ?? items.filter((other) =>
+            other.kind === "photo" && other.position <= item.position).length;
+          const metadata = setup.metadata(item.position);
+          const { restrictions } = metadata;
+          const rights = inboxPlan(item, metadata);
+          const ready = allowed && !item.withdrawn_at && item.exclusion === "none" &&
+            !restrictions.uncertain && setup.displayReady(item);
+          return <li key={item.id} className="min-w-0 space-y-1">
+            <p className="font-medium">{photo ? "照片 " + number : "日记"}</p>
+            {item.withdrawn_at ? <p>已撤下</p> : item.approval ? <p>
+              {item.approval.published && canPublish(item, false) ? "已发布" : "已审核 · 私有"}
+            </p> : item.historical_approval ? <p>有历史审核记录</p> : <>
+              {item.exclusion !== "none" && <p>保留已有排除记录</p>}
+              {restrictions.uncertain && <p>邮件限制或照片范围不明确，需核对</p>}
+              {restrictions.site && <p>邮件限制：不公开</p>}
+              {restrictions.zip && <p>邮件限制：不纳入私有 ZIP</p>}
+              {restrictions.chain && <p>邮件限制：不上链（归档和 NFT）</p>}
+              {restrictions.nft && !restrictions.chain && <p>邮件限制：不铸造 NFT</p>}
+              {rights && allowed && <p>条目日期：<time dateTime={rights.localDate}>{rights.localDate}</time></p>}
+              {photo && (ready ? <InboxPreview key={item.version_id + "-" + (setup.job(item.id, item.version_id)?.updated_at ?? "intake")}
+                number={number} src={"/maintain/review/" + row.id + "/display?" + new URLSearchParams({
+                  item: item.id, version: item.version_id,
+                })} /> : rights && allowed && <p>{setup.active || waiting ? "正在准备私有预览…" : "私有预览待准备"}</p>)}
+              {!photo && allowed && !restrictions.uncertain && item.exclusion === "none" &&
+                <details>
+                  <summary className="cursor-pointer underline">查看日记全文</summary>
+                  <p className="mt-2 whitespace-pre-wrap wrap-anywhere">{item.diary_text}</p>
+                </details>}
+            </>}
+          </li>;
+        })}
+      </ul>
+      {candidates.length > 0 && live.some((item) => setup.metadata(item.position).restrictions.uncertain) &&
+        <p>本次只批准用途明确的条目。</p>}
+      {candidates.length > 0 && !needsDisplay && <form action={confirmInbox.bind(null, row.id,
+        live.map((item) => [item.id, item.version_id, inboxPlan(item, setup.metadata(item.position))?.snapshot ?? null]))}>
+        <InboxButton label="批准投稿" pendingLabel="正在批准…" />
+      </form>}
+      {!waiting && photos.length > 0 && (needsDisplay
+        ? <form action={retryInbox.bind(null, row.id, photos.map((item) => ({
+          itemId: item.id, versionId: item.version_id,
+        })), false)}>
+          <InboxButton label="准备私有预览" pendingLabel="正在请求…" />
+        </form>
+        : <details>
+          <summary className="cursor-pointer underline">预览准备</summary>
+          <form className="mt-2" action={retryInbox.bind(null, row.id, photos.map((item) => ({
+            itemId: item.id, versionId: item.version_id,
+          })), true)}>
+            <InboxButton label="重试准备私有预览" pendingLabel="正在请求…" />
+          </form>
+        </details>)}
+      {canWithdraw && <form action={withdrawInbox.bind(null, row.id)}>
+        <InboxButton label="撤下投稿" pendingLabel="正在撤下…" />
+      </form>}
+    </li>;
+  }
+
+  const pending = entries.filter(({ row }) => row.pending);
+  const reviewed = entries.filter(({ row }) => !row.pending);
+  return <>
+    {active && <RefreshInbox />}
+    {status && Object.hasOwn(messages, status) && <p role="status">{messages[status]}</p>}
+    <section className="space-y-3" aria-labelledby="pending-heading">
+      <h2 id="pending-heading" className="font-heading text-xl font-semibold">待审核投稿</h2>
+      {pending.length ? <ul className="space-y-3">{pending.map(card)}</ul> : <p>暂无待审核投稿。</p>}
+      {(page > 1 || morePending) && <nav aria-label="待审核投稿分页" className="flex flex-wrap gap-4">
+        {page > 1 && <Link href={"/maintain?inboxPage=" + (page - 1)} className="underline">较新投稿</Link>}
+        {morePending && <Link href={"/maintain?inboxPage=" + (page + 1)} className="underline">较早投稿</Link>}
+      </nav>}
+    </section>
+    <section className="space-y-3" aria-labelledby="reviewed-heading">
+      <h2 id="reviewed-heading" className="font-heading text-xl font-semibold">最近审核记录</h2>
+      {reviewed.length ? <ul className="space-y-3">{reviewed.map(card)}</ul> : <p>暂无审核记录。</p>}
+    </section>
+  </>;
+}

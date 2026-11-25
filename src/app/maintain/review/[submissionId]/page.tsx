@@ -6,7 +6,8 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { createPublicSampleTicket, sampleSecret } from "@/features/foundation/samples";
 import { readPhotoSettings } from "@/features/foundation/photo-approval";
-import { readRealPreparation, realPreparationEnabled } from "@/features/review/real-preparation";
+import { readRealPreparation } from "@/features/review/mail-preparation";
+import { realPreparationEnabled } from "@/features/review/real-preparation";
 import { testPhotoReview } from "@/features/review/photo-decision";
 import { readSiteEnv } from "@/lib/env";
 import { canPublish, findSubmission, readReviewItems, reviewScope } from "@/features/review/store";
@@ -60,11 +61,11 @@ export default async function ReviewDetail({ params, searchParams }: {
         const metadata = setup.metadata(item.position);
         const job = setup.job(item.id, item.version_id);
         const photo = item.kind === "photo";
-        const ready = job?.status === "done";
+        const ready = setup.displayReady(item);
         const active = job?.status === "queued" || job?.status === "running";
         return <fieldset key={item.id} className="space-y-2 rounded border p-4">
           <legend>{photo ? "照片" : "日记"} · {item.position + 1} · 测试投稿准备</legend>
-          {metadata.blocked || item.exclusion !== "none" ? <p>投稿有排除标记或缺少来源记录，保持私有。</p> : <>
+          {!setup.found || metadata.restrictions.uncertain || item.exclusion !== "none" ? <p>投稿有排除标记或缺少来源记录，保持私有。</p> : <>
             {photo && <>
               {ready && <Image unoptimized width={640} height={480} className="h-auto max-w-full" alt="供人工审核的测试展示图"
                 src={`/maintain/review/${submissionId}/display?` + new URLSearchParams({ item: item.id, version: item.version_id })} />}
@@ -76,11 +77,11 @@ export default async function ReviewDetail({ params, searchParams }: {
             <form className="space-y-2" action={saveRealItem.bind(null, submissionId, item.id, item.version_id)}>
               <label className="block">条目日期 <input type="date" name="date" required defaultValue={item.local_date ?? metadata.date ?? ""} /></label>
               <p>只勾选投稿者已明确许可的用途。</p>
-              <label className="block"><input type="checkbox" name="site" disabled={photo && !ready} defaultChecked={item.rights?.public_view} /> 允许站内发布</label>
-              <label className="block"><input type="checkbox" name="zip" disabled={photo && !ready} defaultChecked={item.rights?.private_export} /> 允许纳入私有 ZIP</label>
-              {photo && ready && <>
+              <label className="block"><input type="checkbox" name="site" disabled={metadata.restrictions.site || (photo && !ready)} defaultChecked={!metadata.restrictions.site && item.rights?.public_view} /> 允许站内发布</label>
+              <label className="block"><input type="checkbox" name="zip" disabled={metadata.restrictions.zip || (photo && !ready)} defaultChecked={!metadata.restrictions.zip && item.rights?.private_export} /> 允许纳入私有 ZIP</label>
+              {photo && ready && !metadata.restrictions.chain && <>
                 <label className="block"><input type="checkbox" name="archive" defaultChecked={item.rights?.arweave} /> 允许测试归档</label>
-                <label className="block"><input type="checkbox" name="mint" defaultChecked={item.rights?.nft} /> 允许测试铸造</label>
+                <label className="block"><input type="checkbox" name="mint" disabled={metadata.restrictions.nft} defaultChecked={!metadata.restrictions.nft && item.rights?.nft} /> 允许测试铸造</label>
               </>}
               <Button type="submit">保存日期和用途授权</Button>
             </form>
@@ -91,7 +92,8 @@ export default async function ReviewDetail({ params, searchParams }: {
     <form className="space-y-4" action={confirmReview.bind(null, submissionId, randomUUID())}>
       {pending && <p>{setup ? "先选择本次审核的条目，再选择是否站内发布。其余条目继续待审核。" : "逐项选择是否站内发布。未勾选的条目将保持私有。"}</p>}
       {items.map((item) => {
-        const editable = senderAllowed && !item.approval && !item.withdrawn_at;
+        const restrictions = setup?.metadata(item.position).restrictions;
+        const editable = senderAllowed && !item.approval && !item.withdrawn_at && !item.historical_approval && !restrictions?.uncertain;
         const publishable = canPublish(item, Boolean(scope.sample));
         return <fieldset className="space-y-2 rounded border p-4" key={item.id}>
           <legend>{item.title || (item.kind === "photo" ? "照片" : "日记")} · {item.position + 1}</legend>
@@ -102,14 +104,14 @@ export default async function ReviewDetail({ params, searchParams }: {
             : editable && <>
               {setup ? <label className="block"><input type="checkbox" name="item" value={item.id + "/" + item.version_id} /> 本次确认此条目</label>
                 : <input type="hidden" name="item" value={item.id + "/" + item.version_id} />}
-              {publishable ? <label><input type="checkbox" name={"public-" + item.id} /> 站内发布</label>
+              {publishable && !restrictions?.site ? <label><input type="checkbox" name={"public-" + item.id} /> 站内发布</label>
                 : <p>当前条目缺少发布授权、日期或展示内容。</p>}
-              {testPhoto && publishable && item.kind === "photo" && item.rights?.arweave && <label className="block">
+              {testPhoto && publishable && !restrictions?.chain && !restrictions?.site && item.kind === "photo" && item.rights?.arweave && <label className="block">
                 测试永久操作（须勾选站内发布）{" "}
                 <select className="rounded border bg-background p-1" name={"test-photo-" + item.id}>
                   <option value="">无</option>
                   <option value="archive">仅测试归档</option>
-                  {item.rights.nft && recipientVersion &&
+                  {item.rights.nft && !restrictions?.nft && recipientVersion &&
                     <option value={recipientVersion}>测试归档并铸造到已批准的固定接收方</option>}
                 </select>
               </label>}

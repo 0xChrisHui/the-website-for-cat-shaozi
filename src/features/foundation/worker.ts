@@ -6,7 +6,7 @@ import type { JobInput, WorkerContext } from "@/lib/contracts/jobs";
 import { permanentDeploymentKind, type TestDeploymentReleaseSource } from "@/lib/contracts/permanent";
 import { readWorkerEnv } from "@/lib/env";
 import { assertDatabaseIdentity, queryRows, workerDatabase, type BusinessRow } from "@/lib/supabase/database";
-import { displayJobKind, prepareReviewDisplay, reviewDisplayBlob } from "@/features/intake/review-display";
+import { displayJobKind, prepareIntakeDisplays, prepareReviewDisplay, reviewDisplayBlob } from "@/features/intake/review-display";
 import { handleJob as intake } from "@/features/intake/jobs";
 import { handleJob as review } from "@/features/review/jobs";
 import * as permanentJobs from "@/features/permanent/jobs";
@@ -214,7 +214,20 @@ export async function runWorker(
         }
         const results = await originals.persistPhotos();
         const failed = results.some(({ status }) => status === "source_failed" || status === "conflict");
-        await context.jobs.finish(job.jobId, failed ? "一项或多项原件校验失败" : undefined);
+        const payload = job.payload as { submissionId: string; prepareDisplay?: unknown };
+        const positions = results.filter(({ status }) => status === "persisted" || status === "replayed")
+          .map(({ position }) => position);
+        let displayFailed = false;
+        if (payload.prepareDisplay === true && positions.length > 0) {
+          try {
+            displayFailed = await prepareIntakeDisplays(connection, payload.submissionId, positions, root,
+              reviewDisplayBlob(token, host), photoSignal);
+          } catch {
+            displayFailed = true;
+          }
+        }
+        if (!stop.signal.aborted) await context.jobs.finish(job.jobId, failed ? "一项或多项原件校验失败" :
+          displayFailed ? "一项或多项预览准备失败" : undefined);
       } else {
         const handler = handlers.get(job.kind.split(".")[0] ?? "");
         if (job.kind === photoKind && photo) {

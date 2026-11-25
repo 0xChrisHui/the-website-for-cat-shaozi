@@ -5,7 +5,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { expect, it, vi } from "vitest";
 import { displayKey } from "@/features/public/media-key";
-import { prepareReviewDisplay } from "./review-display";
+import { prepareIntakeDisplays, prepareReviewDisplay } from "./review-display";
 
 it("authenticates persisted bytes, strips metadata, bounds and reuses the exact private derivative", async () => {
   const root = await mkdtemp(join(tmpdir(), "review-display-"));
@@ -30,7 +30,9 @@ it("authenticates persisted bytes, strips metadata, bounds and reuses the exact 
       write: vi.fn(async (_key: string, bytes: Buffer) => { derivative = Buffer.from(bytes); }),
     };
 
-    await prepareReviewDisplay({ query }, binding, root, blob, signal);
+    query.mockResolvedValueOnce({ rows: [binding] });
+    await expect(prepareIntakeDisplays({ query }, submissionId, [0], root, blob, signal)).resolves.toBe(false);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("v.version=1"), [submissionId, [0]]);
     const bytes = await blob.read();
     expect(bytes).toBeInstanceOf(Buffer);
     const metadata = await sharp(bytes!).metadata();

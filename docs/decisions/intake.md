@@ -51,3 +51,9 @@ PR #39 checks passed for the tested SHA `83641c169908bd2f1d3e02d39b5b87caf051b9a
 ### Open items for the maintainer
 
 - The deployed fixed callbacks and the real Dot rows on the Preview SHA still need the manual F2/F3 confirmation described in `plan.md`.
+
+## F2 mail restriction handoff
+
+On the existing submit request, keep each photo's `position` in the original photo order. For a clearly identified attachment, send the shortest verbatim restriction clause in that item's existing `exclusionQuote`. For a submission-wide restriction, a numbered reference, or an unclear attachment target, send the shortest verbatim clause in the optional top-level `restrictionQuotes` array. Send separate entries for independent clauses. The array accepts up to 20 entries of up to 512 characters each. Never infer an attachment position from unclear wording or send the whole mail body.
+
+For example, `["第 2 张不要上链"]` refers to the second photo in ascending `position` order, counting only photos. This keeps the photo eligible for site display and the private ZIP while excluding archive and NFT. `["Do not publish", "Do not include these in the ZIP"]` sets the separate site and ZIP restrictions for the submission. Unclear clauses stay pending for the affected scope. The site stores extracted flags from top-level quotes. Existing clients can omit the new array. This contract is ready for a later Dot integration.

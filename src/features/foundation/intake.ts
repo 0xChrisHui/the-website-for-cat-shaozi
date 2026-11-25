@@ -4,6 +4,7 @@ import { z } from "zod";
 import { intakeEventSchema, intakeEventStorageKey, prepareUploadSchema, stage0IntakeSource, type FileRef } from "@/lib/contracts/intake";
 import { readSiteEnv } from "@/lib/env";
 import { queryRows, withWebsiteDb, type BusinessRow } from "@/lib/supabase/database";
+import { mailRestrictions } from "@/features/intake/mail-restrictions";
 import { hidden } from "./samples";
 
 class IntakeError extends Error {
@@ -113,6 +114,10 @@ export async function sampleIntake(request: Request, phase: "prepare" | "submit"
     const hints = input.commonDateHint !== undefined || itemHints.length > 0
       ? { commonDateHint: input.commonDateHint, items: itemHints }
       : undefined;
+    // Keep only the extracted flags from mail-level quotes. Legacy attachment quotes retain their original contract.
+    const mail = input.restrictionQuotes?.length && mailRestrictions(photos.map(({ position }) => position),
+      input.restrictionQuotes.map((quote) => ({ quote })));
+    const restrictions = mail ? input.items.map(({ position }) => ({ position, flags: mail(position) })) : undefined;
     const storedEventId = intakeEventStorageKey(stage0IntakeSource, input.eventId);
     const result = await withWebsiteDb(async (db) => {
       await db.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", ["stage0:submit:" + storedEventId]);
@@ -142,7 +147,8 @@ export async function sampleIntake(request: Request, phase: "prepare" | "submit"
           [itemId, submissionId, position]);
         await db.query("insert into item_versions(item_id,version,diary_text) values($1,1,$2)", [itemId, diaryText]);
       }
-      const payload = { submissionId, items: photos, ...(hints && { hints }) };
+      const payload = { submissionId, items: photos, ...(hints && { hints }),
+        ...(restrictions && { restrictions }), ...(photos.length > 0 && { prepareDisplay: true }) };
       await db.query("insert into jobs(id,kind,payload,status) values($1,'foundation.intake',$2,$3)",
         [jobId, payload, photos.length > 0 ? "queued" : "done"]);
       return { submissionId, jobId, duplicate: false };
