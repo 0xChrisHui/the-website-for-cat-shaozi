@@ -221,6 +221,15 @@ const approvedFoundationRepairs = new Map([
       "src/lib/contracts/intake.ts",
     ],
   }],
+  [49, {
+    branch: "ops/f3-visible-diary",
+    reviewedBase: "fba81b5e7222cc6ad3a25042fc8edf8484856eb1",
+    reviewedHead: "3f451f1bb723fb6c836ef2a378e8a2db26afe03f",
+    paths: [
+      "src/app/maintain/review/inbox.test.ts",
+      "src/app/maintain/review/inbox.tsx",
+    ],
+  }],
 ]);
 
 function isApprovedFoundationRepair(pr, parent, merged) {
