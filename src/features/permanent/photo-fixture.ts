@@ -16,7 +16,7 @@ export function createPhotoFixture(archive: ArLocal, save?: (snapshot: string) =
   const key = generatePrivateKey();
   const signer = privateKeyToAccount(key);
   const sender = signer.address;
-  const recipient = "0x0000000000000000000000000000000000000001";
+  const recipient = privateKeyToAccount(generatePrivateKey()).address;
   const runtime = "0x6000";
   const deployment = {
     reviewedSha: "e".repeat(40),
