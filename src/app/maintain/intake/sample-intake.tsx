@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PendingRow } from "./pending-row";
 import { Button } from "@/components/ui/button";
 import { normalizeIntakeDate } from "@/features/intake/normalize";
 import { previewIntakeEvent as event } from "@/features/intake/preview-fixture";
@@ -20,7 +20,10 @@ export function SampleIntake({ draft, date }: SampleIntakeParams) {
       <Button type="submit">投递样本</Button>
       <Button type="submit" disabled={!submitted}>重投同一事件</Button>
     </form>
-    {submitted && <p><Link href={intakePath + "?draft=open"}>打开草稿</Link></p>}
+    {submitted && <ul>
+      <PendingRow receivedAt={new Date(event.receivedAt)} status="待审核"
+        photoCount={event.items.filter(({ kind }) => kind === "photo").length} href={intakePath + "?draft=open"} />
+    </ul>}
     {open && <section aria-labelledby="sample-draft-title">
       <h2 id="sample-draft-title">投稿草稿</h2>
       <ul className="space-y-3">
