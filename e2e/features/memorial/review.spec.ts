@@ -18,8 +18,8 @@ if (process.env.BASE_URL) {
     await page.getByRole("link", { name: "审核投稿" }).click();
     await page.getByRole("button", { name: "准备审核样本" }).click();
     await page.getByRole("link", { name: /待审核/ }).click();
-    const detail = page.url();
     await expect(page.getByRole("heading", { name: "投稿审核详情" })).toBeVisible();
+    const detail = page.url();
     await page.getByRole("group", { name: /合成授权照片/ }).getByRole("checkbox").check();
     await page.getByRole("group", { name: /合成日记/ }).getByRole("checkbox").check();
     await expect(page.getByRole("group", { name: /合成私有照片/ }).getByRole("checkbox")).toHaveCount(0);
