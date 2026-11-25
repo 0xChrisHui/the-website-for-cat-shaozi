@@ -38,8 +38,8 @@ export function mailRestrictions(photoPositions: number[], quotes: Quote[]) {
   const scoped: { position?: number; photosOnly?: boolean; flag: keyof RestrictionFlags }[] = [];
   for (const { quote, position } of quotes) {
     let clause = quote.normalize("NFKC").trim().toLowerCase()
-      .replace(/[。.!！]+$/, "").replace(/^(?:请|please)\s*/, "");
-    const target = /^(?:第\s*(\d+|[一二三四五六七八九十])\s*张(?:照片|图)?|(?:the )?(?:photo|picture|image)\s*#?(\d+)|(?:the )?(first|second|third) (?:photo|picture|image))\s*/.exec(clause);
+      .replace(/[。.!！]+$/, "").replace(/^对了[,，]\s*/, "").replace(/^(?:请|please)\s*/, "");
+    const target = /^(?:第\s*(\d+|[一二三四五六七八九十])\s*张(?:照片|图片|图)?|(?:the )?(?:photo|picture|image)\s*#?(\d+)|(?:the )?(first|second|third) (?:photo|picture|image))\s*/.exec(clause);
     const ordinalText = target?.[1] ?? target?.[2];
     const chineseOrdinal = ordinalText ? "一二三四五六七八九十".indexOf(ordinalText) + 1 : 0;
     const ordinal = Number(ordinalText) || chineseOrdinal || ["first", "second", "third"].indexOf(target?.[3] ?? "") + 1;
@@ -56,7 +56,7 @@ export function mailRestrictions(photoPositions: number[], quotes: Quote[]) {
       continue;
     }
     if (group) clause = clause.slice(group[0].length);
-    const singularPhoto = /^(?:这张(?:照片|图)?|这个(?:照片|图片|图)|该(?:照片|图片)|this (?:photo|picture|image))\s*/.exec(clause);
+    const singularPhoto = /^(?:这张(?:照片|图片|图)?|这个(?:照片|图片|图)|该(?:照片|图片)|this (?:photo|picture|image))\s*/.exec(clause);
     let bound = named ?? position;
     if (singularPhoto && bound === undefined && photos.length === 1) bound = photos[0];
     if (singularPhoto && bound !== undefined) clause = clause.slice(singularPhoto[0].length);
