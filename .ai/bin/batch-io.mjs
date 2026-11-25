@@ -94,16 +94,31 @@ export function openForge(repo, invoke = (file, args) => {
       .sort((a, b) => b.id - a.id)[0];
     if (!recent || recent.status !== 'completed') return null;
     const jobs = gh('api', slug + '/actions/runs/' + recent.id + '/jobs?filter=latest', '--paginate', '--slurp');
-    const matches = jobs.flatMap(page => page.jobs)
-      .filter(job => job.head_sha === tip && job.name === 'e2e');
-    if (matches.length !== 1 || matches[0].status !== 'completed') return null;
-    if (matches[0].conclusion === 'success' && recent.conclusion === 'success') {
-      return { sha: tip, outcome: 'green', workflowRun: recent.id };
-    }
-    if (failedConclusions.has(matches[0].conclusion)) {
-      return { sha: tip, outcome: 'red', workflowRun: recent.id };
-    }
-    return null;
+    const exact = jobs.flatMap(page => page.jobs).filter(job => job.head_sha === tip);
+    const deploy = exact.filter(job => job.name === 'deploy');
+    const browser = exact.filter(job => job.name === 'browser');
+    if (deploy.length !== 1 || deploy[0].status !== 'completed' || deploy[0].conclusion !== 'success' ||
+        browser.length !== 1 || browser[0].status !== 'completed') return null;
+    const result = browser[0].conclusion;
+    const outcome = result === 'success' && recent.conclusion === 'success' ? 'green' :
+      failedConclusions.has(result) && failedConclusions.has(recent.conclusion) ? 'red' : null;
+    if (!outcome) return null;
+
+    const state = outcome === 'green' ? 'success' : 'failure';
+    const statuses = gh('api', slug + '/commits/' + tip + '/statuses?per_page=100', '--paginate', '--slurp').flat();
+    const status = statuses.find(entry => entry.context === 'e2e');
+    if (status?.state !== state || status.creator?.login !== 'github-actions[bot]') return null;
+    const target = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/actions\/runs\/([1-9]\d*)$/.exec(status.target_url ?? '');
+    if (!target) return null;
+    const [, repository, publisherId] = target;
+    const publisher = gh('api', slug + '/actions/runs/' + publisherId);
+    if (publisher.path?.split('@')[0] !== '.github/workflows/e2e-status.yml' ||
+        publisher.repository?.full_name !== repository || publisher.event !== 'workflow_run' ||
+        publisher.status !== 'completed' || publisher.conclusion !== state) return null;
+    const artifacts = gh('api', slug + '/actions/runs/' + publisherId + '/artifacts?per_page=100', '--paginate', '--slurp')
+      .flatMap(page => page.artifacts);
+    if (!artifacts.some(artifact => artifact.name === 'e2e-' + tip && artifact.expired === false)) return null;
+    return { sha: tip, outcome, workflowRun: recent.id };
   }
   return {
     fetchRefs() { git('fetch', '--prune', 'origin'); },
