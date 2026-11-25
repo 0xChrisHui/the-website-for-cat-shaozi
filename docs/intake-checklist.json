@@ -708,9 +708,9 @@
     },
     {
       "id": "recovery-boundary",
-      "name": "单盘留存与可恢复范围",
-      "where_to_get": "首版无异地备份。使用者核对有哪些已下载私有 ZIP、链上记录及归档副本可回读",
-      "budget_alert": "G2 用合成素材确认恢复边界，未归档私有原图失盘会丢失",
+      "name": "数据库与私有原图的独立备份",
+      "where_to_get": "上线前为数据库和私有原图分别留一份独立备份。选一封获准测试的投稿恢复到隔离环境",
+      "budget_alert": "核对恢复记录、原图 SHA-256，并以维护者登录后台打开照片",
       "status": "not_started",
       "evidence": null,
       "unattended_use": false,
@@ -724,8 +724,8 @@
       ],
       "smoke": {
         "type": "manual",
-        "how_to_confirm": "G2 用合成素材确认恢复边界，未归档私有原图失盘会丢失",
-        "expect": "G2 用合成素材确认恢复边界，未归档私有原图失盘会丢失"
+        "how_to_confirm": "核对恢复记录、原图 SHA-256，并以维护者登录后台打开照片",
+        "expect": "核对恢复记录、原图 SHA-256，并以维护者登录后台打开照片"
       },
       "notes": "未开始"
     }
