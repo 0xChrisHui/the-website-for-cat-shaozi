@@ -7,6 +7,7 @@ import { sameOrigin } from "@/features/foundation/samples";
 import { approveSubmission, ReviewConflict } from "@/features/review/approve";
 import { readReviewForm } from "@/features/review/photo-decision";
 import { prepareReviewSample } from "@/features/review/sample";
+import { changeRealPreparation } from "@/features/review/real-preparation";
 import { reviewScope } from "@/features/review/store";
 import { withdrawSubmission } from "@/features/review/withdraw";
 
@@ -47,3 +48,29 @@ export async function withdrawReview(submissionId: string) {
   redirect("/maintain/review/" + submissionId);
 }
 
+
+export async function prepareRealItem(submissionId: string, itemId: string, versionId: string) {
+  await updatePreparation(submissionId, itemId, versionId, { kind: "prepare" });
+}
+
+export async function saveRealItem(submissionId: string, itemId: string, versionId: string, form: FormData) {
+  await updatePreparation(submissionId, itemId, versionId, {
+    kind: "save", date: form.get("date"), publicView: form.get("site") === "on",
+    privateExport: form.get("zip") === "on", arweave: form.get("archive") === "on", nft: form.get("mint") === "on",
+  });
+}
+
+async function updatePreparation(submissionId: string, itemId: string, versionId: string,
+  change: Parameters<typeof changeRealPreparation>[2],
+) {
+  await requireReviewAction();
+  if (!z.uuid().safeParse(submissionId).success) notFound();
+  const path = "/maintain/review/" + submissionId;
+  try {
+    await changeRealPreparation(submissionId, { itemId, versionId }, change);
+  } catch (error) {
+    if (!(error instanceof ReviewConflict || error instanceof z.ZodError)) throw error;
+    redirect(path + "?status=setup-conflict");
+  }
+  redirect(path + (change.kind === "prepare" ? "?status=preparing" : "?status=setup-saved"));
+}

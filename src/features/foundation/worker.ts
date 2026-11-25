@@ -6,6 +6,7 @@ import type { JobInput, WorkerContext } from "@/lib/contracts/jobs";
 import { permanentDeploymentKind, type TestDeploymentReleaseSource } from "@/lib/contracts/permanent";
 import { readWorkerEnv } from "@/lib/env";
 import { assertDatabaseIdentity, queryRows, workerDatabase, type BusinessRow } from "@/lib/supabase/database";
+import { displayJobKind, prepareReviewDisplay, reviewDisplayBlob } from "@/features/intake/review-display";
 import { handleJob as intake } from "@/features/intake/jobs";
 import { handleJob as review } from "@/features/review/jobs";
 import * as permanentJobs from "@/features/permanent/jobs";
@@ -30,13 +31,14 @@ const permanent = permanentModule.handleJob;
 
 const handlers = new Map([["intake", intake], ["review", review], ["permanent", permanent], ["exports", exports]]);
 
-async function nextJob(db: PoolClient, photoEnabled: boolean): Promise<{ job: JobInput; claimedAt: string } | null> {
+async function nextJob(db: PoolClient, photoEnabled: boolean, test: boolean): Promise<{ job: JobInput; claimedAt: string } | null> {
   const [row] = await queryRows<Pick<BusinessRow<"jobs">, "id" | "kind" | "schema_version" | "payload"> & { claimed_at: string }>(db, `
     update jobs set status = 'running', updated_at = case when kind=$2 then clock_timestamp() else now() end
     where id = (select id from jobs where sample_run_id is null and status = 'queued' and kind <> $3 and ($1 or kind<>$2)
+      and ($4 or kind<>$5)
       order by created_at, id limit 1 for update skip locked)
     returning id, kind, schema_version, payload, updated_at::text as claimed_at
-  `, [photoEnabled, photoKind, privateExportKind]);
+  `, [photoEnabled, photoKind, privateExportKind, test, displayJobKind]);
   return row ? {
     job: { jobId: row.id, kind: row.kind, schemaVersion: row.schema_version, payload: row.payload },
     claimedAt: row.claimed_at,
@@ -120,7 +122,11 @@ export async function runWorker(
       env.instance === "test" ? () => hasUnsettledPhotoMint(connection) : undefined);
     await transaction(async (db) => {
       await lockExportScope(db, null);
-      if (env.instance === "test") await retryPhotoJobs(db, true);
+      if (env.instance === "test") {
+        await retryPhotoJobs(db, true);
+        await db.query(`update jobs set status='queued', reason=null, updated_at=now()
+          where kind=$1 and schema_version=1 and sample_run_id is null and status='running'`, [displayJobKind]);
+      }
       await recoverWorkerJobs(db, env.instance);
     });
     let nextReleaseCheck = 0;
@@ -170,7 +176,7 @@ export async function runWorker(
       }
       if (photo) await retryPhotoJobs(connection);
       if (stop.signal.aborted) break;
-      const claimed = await nextJob(connection, Boolean(photo));
+      const claimed = await nextJob(connection, Boolean(photo), env.instance === "test");
       if (!claimed) {
         await delay(2000, undefined, { signal: stop.signal }).catch(() => undefined);
         continue;
@@ -178,6 +184,16 @@ export async function runWorker(
       const { job, claimedAt } = claimed;
       if (job.schemaVersion !== 1) {
         await context.jobs.finish(job.jobId, "不支持的任务版本");
+      } else if (job.kind === displayJobKind) {
+        const { BLOB_READ_WRITE_TOKEN: token, BLOB_STORE_HOST: host } = env;
+        let reason: string | undefined;
+        try {
+          if (env.instance !== "test" || !token || !host) throw new Error("Review Blob unavailable");
+          await prepareReviewDisplay(connection, job.payload, root, reviewDisplayBlob(token, host), photoSignal);
+        } catch {
+          reason = "展示副本准备失败，可在审核页重试";
+        }
+        if (!stop.signal.aborted) await context.jobs.finish(job.jobId, reason);
       } else if (job.kind === "foundation.intake") {
         const { BLOB_READ_WRITE_TOKEN: token, BLOB_STORE_HOST: host } = env;
         if (env.instance !== "test" || !token || !host) {
