@@ -1,7 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { issueSignedToken, presignUrl } from "@vercel/blob";
 import { z } from "zod";
-import { intakeEventSchema, intakeEventStorageKey, prepareUploadSchema, stage0IntakeSource } from "@/lib/contracts/intake";
+import { intakeEventSchema, intakeEventStorageKey, prepareUploadSchema, stage0IntakeSource, type FileRef } from "@/lib/contracts/intake";
 import { readSiteEnv } from "@/lib/env";
 import { queryRows, withWebsiteDb, type BusinessRow } from "@/lib/supabase/database";
 import { hidden } from "./samples";
@@ -40,13 +40,6 @@ async function boundedJson(request: Request) {
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown; }
   catch { throw new IntakeError(400); }
 }
-
-const imageEvent = intakeEventSchema.extend({
-  items: z.array(z.object({
-    kind: z.literal("photo"), position: z.number().int().min(0).max(99),
-    attachmentRef: intakeEventSchema.shape.items.element.shape.attachmentRef.unwrap(),
-  }).strict()).min(1).max(100),
-});
 
 export async function sampleIntake(request: Request, phase: "prepare" | "submit") {
   const env = readSiteEnv();
@@ -99,10 +92,27 @@ export async function sampleIntake(request: Request, phase: "prepare" | "submit"
       });
       return Response.json({ objectKey, uploadUrl: presignedUrl, expiresAt: expiresAt.toISOString() });
     }
-    const input = imageEvent.parse(raw);
+    const input = intakeEventSchema.parse(raw);
+    const photos: { kind: "photo"; position: number; attachmentRef: FileRef }[] = [];
+    const diaries: { position: number; diaryText: string }[] = [];
+    for (const { kind, position, attachmentRef, diaryText } of input.items) {
+      if (kind === "photo") {
+        if (!attachmentRef || diaryText !== undefined) throw new IntakeError(400);
+        photos.push({ kind, position, attachmentRef });
+      } else {
+        if (diaryText === undefined || attachmentRef !== undefined) throw new IntakeError(400);
+        diaries.push({ position, diaryText });
+      }
+    }
     if (input.items.length > env.INTAKE_MAX_ITEMS ||
-        input.items.reduce((total, item) => total + item.attachmentRef.sizeBytes, 0) > env.INTAKE_MAX_EVENT_BYTES) throw new IntakeError(413);
+        photos.reduce((total, item) => total + item.attachmentRef.sizeBytes, 0) > env.INTAKE_MAX_EVENT_BYTES) throw new IntakeError(413);
     if (new Set(input.items.map((item) => item.position)).size !== input.items.length) throw new IntakeError(400);
+    const itemHints = input.items.flatMap(({ position, dateHint, exclusionQuote }) =>
+      dateHint === undefined && exclusionQuote === undefined ? [] : [{ position, dateHint, exclusionQuote }],
+    );
+    const hints = input.commonDateHint !== undefined || itemHints.length > 0
+      ? { commonDateHint: input.commonDateHint, items: itemHints }
+      : undefined;
     const storedEventId = intakeEventStorageKey(stage0IntakeSource, input.eventId);
     const result = await withWebsiteDb(async (db) => {
       await db.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", ["stage0:submit:" + storedEventId]);
@@ -116,7 +126,7 @@ export async function sampleIntake(request: Request, phase: "prepare" | "submit"
       }
       const submissionId = randomUUID();
       const jobId = randomUUID();
-      for (const { position, attachmentRef: file } of input.items) {
+      for (const { position, attachmentRef: file } of photos) {
         const verified = await db.query(`
           update stage0_uploads set used = true
           where object_key=$1 and event_id=$2 and sender_hash=$3 and position=$4
@@ -126,8 +136,15 @@ export async function sampleIntake(request: Request, phase: "prepare" | "submit"
       }
       await db.query("insert into submissions(id,event_id,sender_hash,received_at,source) values($1,$2,$3,$4,$5)",
         [submissionId, storedEventId, sender, input.receivedAt, stage0IntakeSource]);
-      await db.query("insert into jobs(id,kind,payload) values($1,'foundation.intake',$2)",
-        [jobId, { submissionId, items: input.items }]);
+      for (const { position, diaryText } of diaries) {
+        const itemId = randomUUID();
+        await db.query("insert into items(id,submission_id,position,kind) values($1,$2,$3,'diary')",
+          [itemId, submissionId, position]);
+        await db.query("insert into item_versions(item_id,version,diary_text) values($1,1,$2)", [itemId, diaryText]);
+      }
+      const payload = { submissionId, items: photos, ...(hints && { hints }) };
+      await db.query("insert into jobs(id,kind,payload,status) values($1,'foundation.intake',$2,$3)",
+        [jobId, payload, photos.length > 0 ? "queued" : "done"]);
       return { submissionId, jobId, duplicate: false };
     });
     return Response.json(result, { status: result.duplicate ? 200 : 202 });
