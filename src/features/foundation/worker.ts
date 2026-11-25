@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { del, get } from "@vercel/blob";
+import { del } from "@vercel/blob";
 import type { PoolClient } from "pg";
 import { createBlobReader } from "@/lib/adapters/blob";
 import type { JobInput, WorkerContext } from "@/lib/contracts/jobs";
@@ -9,6 +9,7 @@ import { assertDatabaseIdentity, queryRows, workerDatabase, type BusinessRow } f
 import { handleJob as intake } from "@/features/intake/jobs";
 import { handleJob as review } from "@/features/review/jobs";
 import * as permanentJobs from "@/features/permanent/jobs";
+import { privateExportBlob } from "@/features/exports/blob";
 import { handleJob as exports } from "@/features/exports/jobs";
 import { checkThresholds, createNotifier } from "./alerts";
 import { bindIntakeOriginals } from "./intake-originals";
@@ -78,17 +79,9 @@ export async function runWorker(injectedReleaseSource?: TestDeploymentReleaseSou
 
   const { BLOB_READ_WRITE_TOKEN: exportToken, BLOB_STORE_HOST: exportHost } = env;
   async function removeExport(key: string) {
-    if (!exportToken || !exportHost || !/^exports\/private\/[0-9a-f-]{36}\.zip$/.test(key)) {
-      throw new Error("Export cleanup configuration or key");
-    }
-    const url = "https://" + exportHost + "/" + key;
+    if (!exportToken || !exportHost) throw new Error("Export cleanup configuration");
     const signal = AbortSignal.any([lostConnection.signal, AbortSignal.timeout(10_000)]);
-    await del(url, { token: exportToken, abortSignal: signal });
-    const remaining = await get(url, { access: "private", token: exportToken, useCache: false, abortSignal: signal });
-    if (remaining) {
-      await remaining.stream?.cancel();
-      throw new Error("Export object still present");
-    }
+    await privateExportBlob(exportToken, exportHost).removeAndConfirm(key, signal);
   }
 
   try {

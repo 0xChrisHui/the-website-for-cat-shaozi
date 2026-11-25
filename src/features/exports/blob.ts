@@ -3,10 +3,16 @@ import type { ExportStorage } from "./generate";
 
 export function privateExportBlob(token: string, storeHost: string): ExportStorage & {
   sign(key: string): Promise<string>;
+  removeAndConfirm(key: string, signal?: AbortSignal): Promise<void>;
 } {
+  // @vercel/blob 2.9.0 resolves explicit read-write auth from the fourth token segment.
+  const storeId = /^vercel_blob_rw_([A-Za-z0-9]{1,63})_[A-Za-z0-9_-]+$/.exec(token)?.[1];
+  const boundHost = storeId && `${storeId.toLowerCase()}.private.blob.vercel-storage.com`;
+  if (!boundHost || boundHost !== storeHost) throw new Error("Private export Blob store mismatch");
+
   function objectUrl(key: string) {
     if (!/^exports\/private\/[a-f0-9-]{36}\.zip$/.test(key)) throw new Error("Invalid private export key");
-    return `https://${storeHost}/${key}`;
+    return `https://${boundHost}/${key}`;
   }
 
   async function read(key: string) {
@@ -39,9 +45,14 @@ export function privateExportBlob(token: string, storeHost: string): ExportStora
         throw new Error("Export upload could not be confirmed");
       }
     },
-    async removeAndConfirm(key) {
-      await del(objectUrl(key), { token, abortSignal: AbortSignal.timeout(15_000) });
-      if (await read(key)) throw new Error("Export deletion could not be confirmed");
+    async removeAndConfirm(key: string, signal: AbortSignal = AbortSignal.timeout(15_000)) {
+      const url = objectUrl(key);
+      await del(url, { token, abortSignal: signal });
+      const remaining = await get(url, { token, access: "private", useCache: false, abortSignal: signal });
+      if (remaining) {
+        await remaining.stream?.cancel();
+        throw new Error("Export deletion could not be confirmed");
+      }
     },
     async sign(key) {
       objectUrl(key);

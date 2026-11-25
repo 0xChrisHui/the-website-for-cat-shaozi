@@ -15,6 +15,7 @@ export interface ExportClaim {
   readonly versions: readonly Version[];
 }
 
+const maxExportItems = 500;
 const scopeMatch = "sample_run_id is not distinct from $1::uuid";
 type ExportObject = {
   job_id: string;
@@ -49,17 +50,28 @@ type Candidate = Version & {
 
 async function authorizedRows(db: PoolClient, sample: SampleRun, includeContent = false) {
   const rows = await queryRows<Candidate>(db, `
-    select i.id as "itemId", v.id as "versionId", a.version_id as approved, i.exclusion,
-      a.private_export and r.private_export as allowed
-      ${includeContent ? ", i.kind, i.submission_id, i.position, d.caption, d.processed_media_ref, v.file_ref, v.diary_text" : ""}
-    from submissions s join items i on i.submission_id=s.id
-    join lateral (select id, file_ref, diary_text from item_versions where item_id=i.id order by version desc limit 1) v on true
-    ${includeContent ? "left join item_version_display d on d.version_id=v.id" : ""}
-    left join approvals a on a.item_id=i.id and a.version_id=v.id
-    left join item_usage_rights r on r.item_id=i.id
-    where s.source=$1 and ($2::text is null or s.event_id=$2) and i.withdrawn_at is null
-    order by i.id
-  `, [sample ? sampleSource : stage0IntakeSource, sample ? sampleEvent(sample) : null]);
+    with eligible as materialized (
+      select i.id as "itemId", v.id as "versionId", a.version_id as approved, i.exclusion,
+        a.private_export and r.private_export as allowed
+        ${includeContent ? ", i.kind, i.submission_id, i.position" : ""}
+      from submissions s join items i on i.submission_id=s.id
+      join lateral (select id from item_versions where item_id=i.id order by version desc limit 1) v on true
+      join approvals a on a.item_id=i.id and a.version_id=v.id
+      join item_usage_rights r on r.item_id=i.id
+      where s.source=$1 and ($2::text is null or s.event_id=$2) and i.withdrawn_at is null
+        and i.exclusion in ('none', 'explicit') and a.private_export and r.private_export
+      order by i.id
+      limit $3
+    )
+    select e.*
+      ${includeContent ? ", d.caption, d.processed_media_ref, v.file_ref, v.diary_text" : ""}
+    from eligible e
+    ${includeContent ? `
+      left join item_versions v on v.id=e."versionId" and (select count(*) from eligible) < $3
+      left join item_version_display d on d.version_id=v.id
+    ` : ""}
+    order by e."itemId"
+  `, [sample ? sampleSource : stage0IntakeSource, sample ? sampleEvent(sample) : null, maxExportItems + 1]);
   return rows.filter((row) => evaluateContentPolicy({
     itemId: row.itemId, currentVersionId: row.versionId, approvedVersionId: row.approved,
     exclusion: row.exclusion, withdrawn: false, published: false,
@@ -141,6 +153,10 @@ export async function claimExport(db: PoolClient, sample: SampleRun): Promise<Ex
   if (!job) return null;
 
   const versions = await authorizedVersions(db, sample);
+  if (versions.length > maxExportItems) {
+    await db.query("update jobs set status='needs_attention', reason='导出条目超过上限', updated_at=now() where id=$1", [job.id]);
+    return null;
+  }
   const objectKey = sample
     ? `memorial/sample-export/${sample}/${job.id}`
     : `exports/private/${job.id}.zip`;
@@ -169,7 +185,7 @@ export async function recheckExport(db: PoolClient, sample: SampleRun, claim: Ex
     where ${scopeMatch} and job_id=$2 and object_key=$3 and state='reserved'
     and exists (select 1 from jobs where id=$2 and kind=$4 and status='running')
   `, [sample, claim.jobId, claim.objectKey, privateExportKind]);
-  if (!row || !sameVersions(row.versions, claim.versions)) return null;
+  if (!row || row.versions.length > maxExportItems || !sameVersions(row.versions, claim.versions)) return null;
   const candidates = await authorizedRows(db, sample, true);
   return sameVersions(row.versions, candidates) ? candidates : null;
 }

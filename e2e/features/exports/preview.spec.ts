@@ -5,6 +5,10 @@ import { inspectSampleZip } from "../../../src/features/exports/offline-fixture"
 test("sample ZIP is scoped, replaceable, and revoked at its application URL", async ({ page, api, pageErrors }, info) => {
   await page.goto("/maintain/login");
   await page.getByRole("button", { name: "样本登录" }).click();
+  await page.getByRole("link", { name: "审核投稿" }).click();
+  await page.getByRole("button", { name: "准备审核样本" }).click();
+  await expect(page.getByRole("link", { name: /待审核/ })).toBeVisible();
+  await page.goto("/maintain");
   await page.getByRole("link", { name: "离线快照" }).click();
   const generate = page.getByRole("button", { name: "生成离线快照" });
   const download = page.getByRole("link", { name: "下载离线快照" });

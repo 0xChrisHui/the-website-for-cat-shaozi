@@ -34,7 +34,7 @@ async function preparePhoto(source: ExportPhotoSource, stream: Readable, directo
     await pipeline(stream, new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         bytes += chunk.length;
-        if (bytes > (expected?.sizeBytes ?? maxSourceBytes)) return callback(new Error("Snapshot source size exceeded"));
+        if (bytes > Math.min(expected?.sizeBytes ?? maxSourceBytes, maxSourceBytes)) return callback(new Error("Snapshot source size exceeded"));
         hash.update(chunk);
         callback(null, chunk);
       },
