@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ExportClaim, recheckExport } from "@/features/foundation/private-export";
 import type { PhotoWorker } from "@/features/permanent/execute";
 import type { PermanentWorker } from "./permanent";
 
@@ -19,5 +20,11 @@ export interface WorkerContext {
   jobs: { finish(jobId: string, reason?: string): Promise<void> };
   clock: () => Date;
   permanent?: PermanentWorker;
+  privateExport?: {
+    claim: ExportClaim;
+    signal: AbortSignal;
+    recheck(): ReturnType<typeof recheckExport>;
+    publish(): Promise<boolean>;
+  };
   permanentPhoto?: PhotoWorker;
 }

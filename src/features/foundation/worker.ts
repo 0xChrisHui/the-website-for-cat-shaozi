@@ -9,10 +9,14 @@ import { assertDatabaseIdentity, queryRows, workerDatabase, type BusinessRow } f
 import { handleJob as intake } from "@/features/intake/jobs";
 import { handleJob as review } from "@/features/review/jobs";
 import * as permanentJobs from "@/features/permanent/jobs";
+import { privateExportBlob } from "@/features/exports/blob";
 import { handleJob as exports } from "@/features/exports/jobs";
 import { checkThresholds, createNotifier } from "./alerts";
 import { bindIntakeOriginals } from "./intake-originals";
 import { enqueueTestDeployment, readTestDeploymentRelease } from "./permanent-release";
+import {
+  claimExport, cleanupExport, failExport, lockExportScope, privateExportKind, publishExport, recheckExport,
+} from "./private-export";
 import { createPermanentStore, DeploymentUnavailable, recoverWorkerJobs } from "./permanent-store";
 
 import { photoKind } from "./photo-approval";
@@ -29,10 +33,10 @@ const handlers = new Map([["intake", intake], ["review", review], ["permanent", 
 async function nextJob(db: PoolClient, photoEnabled: boolean): Promise<{ job: JobInput; claimedAt: string } | null> {
   const [row] = await queryRows<Pick<BusinessRow<"jobs">, "id" | "kind" | "schema_version" | "payload"> & { claimed_at: string }>(db, `
     update jobs set status = 'running', updated_at = case when kind=$2 then clock_timestamp() else now() end
-    where id = (select id from jobs where sample_run_id is null and status = 'queued' and ($1 or kind<>$2)
+    where id = (select id from jobs where sample_run_id is null and status = 'queued' and kind <> $3 and ($1 or kind<>$2)
       order by created_at, id limit 1 for update skip locked)
     returning id, kind, schema_version, payload, updated_at::text as claimed_at
-  `, [photoEnabled, photoKind]);
+  `, [photoEnabled, photoKind, privateExportKind]);
   return row ? {
     job: { jobId: row.id, kind: row.kind, schemaVersion: row.schema_version, payload: row.payload },
     claimedAt: row.claimed_at,
@@ -76,6 +80,26 @@ export async function runWorker(
     } },
     clock: () => new Date(),
   };
+  async function transaction<T>(run: (db: PoolClient) => Promise<T>) {
+    if (!healthy) throw new Error("Worker connection lost");
+    await connection.query("begin");
+    try {
+      const result = await run(connection);
+      await connection.query("commit");
+      return result;
+    } catch (error) {
+      await connection.query("rollback").catch(() => undefined);
+      throw error;
+    }
+  }
+
+  const { BLOB_READ_WRITE_TOKEN: exportToken, BLOB_STORE_HOST: exportHost } = env;
+  async function removeExport(key: string) {
+    if (!exportToken || !exportHost) throw new Error("Export cleanup configuration");
+    const signal = AbortSignal.any([lostConnection.signal, AbortSignal.timeout(10_000)]);
+    await privateExportBlob(exportToken, exportHost).removeAndConfirm(key, signal);
+  }
+
   try {
     await assertDatabaseIdentity(connection, role, schema);
     const workerKey = "memorial-worker:" + schema;
@@ -94,10 +118,14 @@ export async function runWorker(
     const deployment = createPermanentStore(connection, env.instance,
       releaseSource && (() => readTestDeploymentRelease(releaseSource)),
       env.instance === "test" ? () => hasUnsettledPhotoMint(connection) : undefined);
-    if (env.instance === "test") await retryPhotoJobs(connection, true);
-    await recoverWorkerJobs(connection, env.instance);
+    await transaction(async (db) => {
+      await lockExportScope(db, null);
+      if (env.instance === "test") await retryPhotoJobs(db, true);
+      await recoverWorkerJobs(db, env.instance);
+    });
     let nextReleaseCheck = 0;
     let nextHealthCheck = 0;
+    let nextExportCleanup = 0;
     while (!stop.signal.aborted) {
       if (Date.now() >= nextHealthCheck) {
         nextHealthCheck = Date.now() + 15 * 60 * 1000;
@@ -109,7 +137,39 @@ export async function runWorker(
           .catch(() => console.warn("测试部署发布核对失败"));
       }
       if (stop.signal.aborted) break;
+      if (Date.now() >= nextExportCleanup) {
+        try {
+          const removed = await cleanupExport(transaction, removeExport);
+          nextExportCleanup = Date.now() + (removed ? 0 : 2000);
+        } catch {
+          if (!healthy) throw new Error("Worker connection lost");
+          nextExportCleanup = Date.now() + 2000;
+          console.warn("导出对象清理待重试");
+        }
+      }
+      const claim = await transaction((db) => claimExport(db, null));
+      if (claim) {
+        let uploadSettled = false;
+        try {
+          await exports({ jobId: claim.jobId, kind: privateExportKind, schemaVersion: 1, payload: {} }, {
+            ...context,
+            jobs: { finish: async () => transaction((db) => failExport(db, null, claim)) },
+            privateExport: {
+              claim,
+              signal: lostConnection.signal,
+              recheck: () => transaction((db) => recheckExport(db, null, claim)),
+              publish: () => transaction((db) => publishExport(db, null, claim)),
+            },
+          });
+          uploadSettled = true;
+        } catch {
+          console.warn("导出生成待核对");
+        }
+        // A committed publish survives even when the handler did not receive its response.
+        await transaction((db) => failExport(db, null, claim, uploadSettled));
+      }
       if (photo) await retryPhotoJobs(connection);
+      if (stop.signal.aborted) break;
       const claimed = await nextJob(connection, Boolean(photo));
       if (!claimed) {
         await delay(2000, undefined, { signal: stop.signal }).catch(() => undefined);
