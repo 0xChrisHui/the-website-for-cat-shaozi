@@ -37,6 +37,14 @@ contract MemorialPhotosTest {
         require(photos.minter() == address(this), "minter changed");
     }
 
+    function testOwnerCannotRenounceOwnership() public {
+        vm.expectRevert(abi.encodeWithSelector(MemorialPhotos.OwnershipRenunciationDisabled.selector));
+        photos.renounceOwnership();
+        require(photos.owner() == address(this), "owner changed");
+        photos.setMinter(NEXT_MINTER);
+        require(photos.minter() == NEXT_MINTER, "minter rotation failed");
+    }
+
     function testChangedMinterCanMintAndOwnerLosesMintPermission() public {
         photos.setMinter(NEXT_MINTER);
         require(photos.minter() == NEXT_MINTER, "minter");

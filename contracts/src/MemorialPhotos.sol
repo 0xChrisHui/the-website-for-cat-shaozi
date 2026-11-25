@@ -8,6 +8,7 @@ import {ERC721URIStorage} from "@openzeppelin/contracts/token/ERC721/extensions/
 contract MemorialPhotos is ERC721URIStorage, Ownable {
     error UnauthorizedMinter(address caller);
     error InvalidMinter();
+    error OwnershipRenunciationDisabled();
 
     event MinterChanged(address indexed previousMinter, address indexed newMinter);
 
@@ -16,6 +17,10 @@ contract MemorialPhotos is ERC721URIStorage, Ownable {
     constructor(string memory name_, string memory symbol_) ERC721(name_, symbol_) Ownable(msg.sender) {
         minter = msg.sender;
         emit MinterChanged(address(0), msg.sender);
+    }
+
+    function renounceOwnership() public pure override {
+        revert OwnershipRenunciationDisabled();
     }
 
     function setMinter(address next) external onlyOwner {
