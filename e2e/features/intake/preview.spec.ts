@@ -11,6 +11,11 @@ test("isolated intake sample shows one draft with per-item, common and unresolve
   await page.getByRole("button", { name: "重投同一事件" }).click();
   const draft = page.getByRole("link", { name: "打开草稿" });
   await expect(draft).toHaveCount(1);
+  const pending = page.getByRole("listitem").filter({ has: draft });
+  await expect(pending).toContainText("待审核");
+  await expect(pending).toContainText("已保存原图：3 张");
+  await expect(pending.locator("time")).toContainText("01:00");
+  await assertPage(page, pageErrors, info);
   await draft.click();
   const items = page.getByRole("region", { name: "投稿草稿" }).getByRole("listitem");
   await expect(items).toHaveCount(4);

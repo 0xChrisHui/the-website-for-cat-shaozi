@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import IntakePage from "./page";
+import IntakeDraftPage from "./[submissionId]/page";
+import { readMaintainerDraft } from "@/features/intake/maintainer-queue";
 
 const { readSample, readPublicSample, requireMaintainer, withWebsiteDb, queryRows } = vi.hoisted(() => ({
   readSample: vi.fn(),
@@ -71,6 +73,7 @@ it("requests one summary per pending real submission with a stable bounded order
   queryRows.mockResolvedValue([
     { id: "second", received_at, status: "needs_attention", photo_count: 2, original_bytes: "21474836" },
     { id: "completed", received_at, status: "done", photo_count: 3, original_bytes: "31474836" },
+    { id: "diary-only", received_at, status: "done", photo_count: 0, original_bytes: null },
     { id: "first", received_at, status: "queued", photo_count: 0, original_bytes: null },
   ]);
 
@@ -79,7 +82,7 @@ it("requests one summary per pending real submission with a stable bounded order
   expect(html.match(/已保存原图大小/g)).toHaveLength(2);
   expect(html).toContain("已保存原图：2 张");
   expect(html).toContain("已保存原图：0 张");
-  expect(html).toContain("待审核");
+  expect(html.match(/待审核/g)).toHaveLength(2);
   expect(html).toContain("已保存原图：3 张");
   expect(html.indexOf("需处理")).toBeLessThan(html.indexOf("排队"));
 
@@ -92,9 +95,62 @@ it("requests one summary per pending real submission with a stable bounded order
   expect(sql).toContain("p.status = 'done' and originals.reviewable_count > 0");
   expect(sql).toContain("i.withdrawn_at is null and i.exclusion = 'none'");
   expect(sql).toContain("not exists (select 1 from approvals");
-  expect(sql).toMatch(/where i\.submission_id = p\.id and i\.kind = 'photo'/);
+  expect(sql).toMatch(/where i\.submission_id = p\.id/);
+  expect(sql).toMatch(/i\.kind = 'diary' and v\.diary_text is not null/);
   expect(sql).toMatch(/v\.version = 1/);
-  expect(sql).toMatch(/count\(\*\)::int as photo_count/);
+  expect(sql).toMatch(/as photo_count/);
   expect(sql).toMatch(/order by p\.received_at desc, p\.id desc/);
-  expect(sql).not.toMatch(/sender_hash|event_id|diary_text/);
+  expect(sql).not.toMatch(/sender_hash|event_id/);
+});
+
+const submissionId = "050ac57a-ec5e-492d-815a-277f70c99481";
+
+it("keeps persisted draft details behind maintainer login and sample isolation", async () => {
+  requireMaintainer.mockResolvedValue(null);
+  expect(await readMaintainerDraft(submissionId)).toEqual({ state: "signed-out" });
+  requireMaintainer.mockResolvedValue({ id: "synthetic-maintainer" });
+  readSample.mockResolvedValue({ runId: "synthetic-run" });
+  expect(await readMaintainerDraft(submissionId)).toEqual({ state: "unavailable" });
+  expect(withWebsiteDb).not.toHaveBeenCalled();
+});
+
+it("reads original and diary versions from one submission and renders only private review content", async () => {
+  const file = {
+    objectKey: submissionId + "/0",
+    sizeBytes: 4096,
+    sha256: "a".repeat(64),
+    mediaType: "image/heic",
+  };
+  const receipt = { received_at: new Date("2026-11-25T02:00:00Z"), status: "done", excluded: false };
+  const diary = "合成日记\n请保留原句";
+  queryRows.mockResolvedValue([
+    { ...receipt, item_id: "photo", version_id: "photo-v1", kind: "photo", position: 0, file_ref: file },
+    { ...receipt, item_id: "diary", version_id: "diary-v1", kind: "diary", position: 1, diary_text: diary },
+  ]);
+  expect(await readMaintainerDraft(submissionId)).toMatchObject({
+    state: "ready",
+    draft: { submissionId, items: [
+      { kind: "photo", file, disposition: "pending" },
+      { kind: "diary", diaryText: diary, disposition: "pending" },
+    ] },
+  });
+  const html = renderToStaticMarkup(await IntakeDraftPage({ params: Promise.resolve({ submissionId }) }));
+  expect(html).toContain("待审核");
+  expect(html).toContain("4096 字节");
+  expect(html).toContain(diary);
+  expect(html).not.toContain(file.objectKey);
+  expect(queryRows).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), ["stage0-grok", submissionId]);
+});
+
+it("rejects invalid draft IDs without querying and suppresses excluded diary text", async () => {
+  expect(await readMaintainerDraft("invalid")).toEqual({ state: "missing" });
+  expect(withWebsiteDb).not.toHaveBeenCalled();
+  queryRows.mockResolvedValue([{
+    received_at: new Date("2026-11-25T02:00:00Z"), status: "done", excluded: true,
+    item_id: "diary", version_id: "diary-v1", kind: "diary", position: 1,
+    diary_text: "excluded fixture text",
+  }]);
+  const html = renderToStaticMarkup(await IntakeDraftPage({ params: Promise.resolve({ submissionId }) }));
+  expect(html).toContain("已排除");
+  expect(html).not.toContain("excluded fixture text");
 });
