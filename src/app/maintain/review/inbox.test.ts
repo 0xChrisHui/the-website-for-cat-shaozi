@@ -94,3 +94,11 @@ it("shows the off state by default and lets a maintainer turn an active setting 
     expect(after).toContain(">关闭自动批准</button>");
   } finally { scenario.auto = false; }
 });
+
+it("puts collapsible pending submissions before automatic approval settings", async () => {
+  const html = renderToStaticMarkup(await ReviewInbox({
+    scope: { sample: null, ready: true, source: "stage0-grok", event: null, sender: "synthetic" },
+  }));
+  expect(html.indexOf("待审核投稿</h2>")).toBeLessThan(html.indexOf("自动批准 · 已关闭"));
+  expect(html).toMatch(/<details[^>]*><summary[^>]*>.*?2 张照片.*?待审核/);
+});

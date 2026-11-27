@@ -1,28 +1,34 @@
 import Link from "next/link";
 import { connection } from "next/server";
+import { PublicPhoto } from "@/features/public/photo";
 import { readTimelineView } from "@/features/public/sample-content";
 import { SamplePhoto } from "@/features/public/sample-photo";
-import { diagnosticsEnabled } from "@/lib/env";
 
 export default async function Home() {
   await connection();
-  const showSample = diagnosticsEnabled() && (await readTimelineView()).kind === "sample";
+  const timeline = await readTimelineView().catch(() => null);
+  const cover = timeline?.kind === "published"
+    ? timeline.items.find((item) => item.kind === "photo" && item.publicMediaRef)
+    : undefined;
 
   return (
-    <section className="space-y-6 py-6">
-      <div className="space-y-3">
-        <h1 className="font-heading text-3xl font-semibold sm:text-4xl">首页</h1>
-        <p className="text-lg text-muted-foreground">猫咪纪念站</p>
+    <section className="public-page pb-10">
+      <div className="photo-home-intro text-center">
+        <h1 className="public-title">猫咪纪念站<span className="sr-only"> 首页</span></h1>
+        <Link href="/timeline" className="inline-flex min-h-11 items-center rounded-full bg-primary px-6 py-2.5 font-medium text-primary-foreground">
+          时间线 <span aria-hidden="true" className="ml-2">→</span>
+        </Link>
       </div>
-      {showSample && (
-        <figure className="overflow-hidden rounded-lg border border-border">
+      {timeline?.kind === "sample" && (
+        <figure>
           <SamplePhoto photo="nap" eager />
-          <figcaption className="bg-muted px-4 py-2 text-sm text-muted-foreground">预览样片</figcaption>
+          <figcaption className="mt-2 text-sm text-muted-foreground">预览样片</figcaption>
         </figure>
       )}
-      <Link href="/timeline" className="inline-block rounded bg-primary px-4 py-2 text-primary-foreground">
-        时间线
-      </Link>
+      {!timeline && <p className="photo-frame photo-frame-cover p-4 text-center" role="status">照片暂时无法显示</p>}
+      {cover?.publicMediaRef && (
+        <PublicPhoto key={cover.currentVersionId} src={cover.publicMediaRef} alt={cover.title || "猫咪纪念站主图"} cover />
+      )}
     </section>
   );
 }
