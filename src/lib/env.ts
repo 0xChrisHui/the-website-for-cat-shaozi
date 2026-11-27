@@ -16,6 +16,7 @@ const siteSchema = z.object({
   MAINTAINER_UID: z.uuid().optional(),
   DATABASE_URL: optional,
   APP_ORIGIN: z.url().optional(),
+  SITE_COVER_ITEM_ID: z.uuid().optional(),
   TEST_CALLBACK_ORIGIN: https,
   SAMPLE_SESSION_SECRET: z.string().min(32).optional(),
   STAGE0_INTAKE_TOKEN: z.string().min(32).optional(),

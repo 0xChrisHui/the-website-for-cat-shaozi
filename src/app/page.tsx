@@ -3,13 +3,16 @@ import { connection } from "next/server";
 import { PublicPhoto } from "@/features/public/photo";
 import { readTimelineView } from "@/features/public/sample-content";
 import { SamplePhoto } from "@/features/public/sample-photo";
+import { readSiteEnv } from "@/lib/env";
 
 export default async function Home() {
   await connection();
   const timeline = await readTimelineView().catch(() => null);
-  const cover = timeline?.kind === "published"
-    ? timeline.items.find((item) => item.kind === "photo" && item.publicMediaRef)
-    : undefined;
+  const photos = timeline?.kind === "published"
+    ? timeline.items.filter((item) => item.kind === "photo" && item.publicMediaRef)
+    : [];
+  const preferredCover = photos.length > 0 ? readSiteEnv().SITE_COVER_ITEM_ID : undefined;
+  const cover = photos.find((photo) => photo.itemId === preferredCover) ?? photos[0];
 
   return (
     <section className="public-page pb-10">
@@ -27,7 +30,7 @@ export default async function Home() {
       )}
       {!timeline && <p className="photo-frame photo-frame-cover p-4 text-center" role="status">照片暂时无法显示</p>}
       {cover?.publicMediaRef && (
-        <PublicPhoto key={cover.currentVersionId} src={cover.publicMediaRef} alt={cover.title || "猫咪纪念站主图"} cover />
+        <PublicPhoto key={cover.currentVersionId} src={cover.publicMediaRef} alt={cover.title || "纪念站封面"} cover />
       )}
     </section>
   );
