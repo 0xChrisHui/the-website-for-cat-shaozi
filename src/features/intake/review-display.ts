@@ -73,7 +73,7 @@ export async function prepareReviewDisplay(db: Pick<PoolClient, "query">, payloa
     join lateral (select id, file_ref from item_versions where item_id=i.id order by version desc limit 1) v on true
     join item_versions original on original.item_id=i.id and original.version=1
     where i.id=$1 and v.id=$2 and s.source=$3 and i.kind='photo' and i.withdrawn_at is null
-      and i.exclusion='none' and v.file_ref=original.file_ref
+      and v.file_ref=original.file_ref
       and not exists (select 1 from approvals where item_id=i.id and version_id=v.id)
   `, [itemId, versionId, stage0IntakeSource]);
   if (!row) throw new Error("Review original unavailable");
@@ -105,7 +105,7 @@ export async function prepareIntakeDisplays(
     select i.id as "itemId", v.id as "versionId"
     from items i join item_versions v on v.item_id=i.id and v.version=1
     where i.submission_id=$1 and i.position=any($2::int[]) and i.kind='photo'
-      and i.exclusion='none' and i.withdrawn_at is null
+      and i.withdrawn_at is null
       and not exists (select 1 from item_versions where item_id=i.id and version>1)
       and not exists (select 1 from approvals where item_id=i.id)
     order by i.position

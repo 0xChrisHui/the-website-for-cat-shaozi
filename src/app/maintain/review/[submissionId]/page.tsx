@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { createPublicSampleTicket, sampleSecret } from "@/features/foundation/samples";
 import { readPhotoSettings } from "@/features/foundation/photo-approval";
 import { readRealPreparation } from "@/features/review/mail-preparation";
-import { realPreparationEnabled } from "@/features/review/real-preparation";
+import { realPreparationEnabled, reviewDisplayUrl } from "@/features/review/real-preparation";
 import { testPhotoReview } from "@/features/review/photo-decision";
 import { readSiteEnv } from "@/lib/env";
 import { canPublish, findSubmission, readReviewItems, reviewScope } from "@/features/review/store";
@@ -55,7 +55,7 @@ export default async function ReviewDetail({ params, searchParams }: {
     {status === "setup-saved" && <p role="status">已保存日期和用途授权。请另行确认审核。</p>}
     {status === "setup-conflict" && <p role="status">准备未保存。请核对当前版本、授权和展示副本。</p>}
     {status === "preparing" && <p role="status">已请求准备展示副本。请刷新查看进度。</p>}
-    {!senderAllowed && <p>发件人未通过校验。</p>}
+    {!senderAllowed && <p>发件人未通过校验。批准投稿仍需核对发件人。</p>}
     {setup && <section aria-label="测试投稿准备" className="space-y-4">
       {items.filter((item) => !item.approval && !item.withdrawn_at).map((item) => {
         const metadata = setup.metadata(item.position);
@@ -68,9 +68,6 @@ export default async function ReviewDetail({ params, searchParams }: {
           {!setup.found || metadata.restrictions.uncertain || item.exclusion !== "none" ? <p>投稿有排除标记或缺少来源记录，保持私有。</p>
             : <div className={photo ? "grid gap-4 sm:grid-cols-2 sm:gap-6" : undefined}>
             {photo && <div className="min-w-0 space-y-3">
-              {ready && <InboxPreview key={item.version_id + "-" + (job?.updated_at ?? "intake")}
-                number={item.position + 1} alt="供人工审核的测试展示图"
-                src={`/maintain/review/${submissionId}/display?` + new URLSearchParams({ item: item.id, version: item.version_id })} />}
               {active ? <p role="status">正在准备私有展示副本。请刷新查看进度。</p>
                 : <form className="space-y-2" action={prepareRealItem.bind(null, submissionId, item.id, item.version_id)}>
                   {!ready && <p className="text-muted-foreground" role="status">{job?.status === "needs_attention" ? "私有预览准备失败" : "私有预览待准备"}</p>}
@@ -99,8 +96,13 @@ export default async function ReviewDetail({ params, searchParams }: {
         const editable = senderAllowed && !item.approval && !item.withdrawn_at && !item.historical_approval && !restrictions?.uncertain;
         const publishable = canPublish(item, Boolean(scope.sample));
         const samplePreview = scope.sample && senderAllowed && item.kind === "photo" && publishable;
+        const privatePreview = !scope.sample && item.kind === "photo" && !item.withdrawn_at;
         return <fieldset className="min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-5" key={item.id}>
           <legend>{item.title || (item.kind === "photo" ? "照片" : "日记")} · {item.position + 1}</legend>
+          {privatePreview && <div className="max-w-sm">
+            <InboxPreview key={item.version_id + "-" + (setup?.job(item.id, item.version_id)?.updated_at ?? "intake")}
+              number={item.position + 1} src={reviewDisplayUrl(submissionId, item.id, item.version_id)} />
+          </div>}
           {samplePreview && <div className="max-w-sm">
             <InboxPreview src="/timeline/sample-photo/nap" alt="合成授权照片预览" number={item.position + 1} />
           </div>}

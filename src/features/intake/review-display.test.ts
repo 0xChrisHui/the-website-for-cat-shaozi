@@ -23,14 +23,16 @@ it("authenticates persisted bytes, strips metadata, bounds and reuses the exact 
     await writeFile(join(root, object_key), original);
     const file_ref = { objectKey: object_key, sizeBytes: original.length, mediaType: "image/jpeg",
       sha256: createHash("sha256").update(original).digest("hex") };
-    const query = vi.fn().mockResolvedValue({ rows: [{ object_key, file_ref }] });
+    const query = vi.fn().mockImplementation(async (sql: string) => ({
+      rows: /exclusion\s*=\s*'none'/.test(sql) ? [] : [{ object_key, file_ref }],
+    }));
     let derivative: Buffer<ArrayBuffer> | null = null;
     const blob = {
       read: vi.fn(async () => derivative),
       write: vi.fn(async (_key: string, bytes: Buffer) => { derivative = Buffer.from(bytes); }),
     };
 
-    query.mockResolvedValueOnce({ rows: [binding] });
+    query.mockImplementationOnce(async (sql: string) => ({ rows: /exclusion\s*=\s*'none'/.test(sql) ? [] : [binding] }));
     await expect(prepareIntakeDisplays({ query }, submissionId, [0], root, blob, signal)).resolves.toBe(false);
     expect(query).toHaveBeenCalledWith(expect.stringContaining("v.version=1"), [submissionId, [0]]);
     const bytes = await blob.read();

@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { readRealPreparations } from "@/features/review/mail-preparation";
+import { readSiteEnv } from "@/lib/env";
+import { testPhotoReview } from "@/features/review/photo-decision";
+import { reviewDisplayUrl } from "@/features/review/real-preparation";
 import { inboxPlan } from "@/features/review/inbox-policy";
 import { inboxPageSize, readInboxSubmissions, type ReviewScope } from "@/features/review/store";
 import { withWebsiteDb } from "@/lib/supabase/database";
@@ -34,6 +37,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
     }));
     return { entries, morePending, autoApproval: await readAutoApproval(db) };
   });
+  const canPreparePreviews = testPhotoReview(readSiteEnv().environment, scope.sample);
   const active = entries.some(({ setup, items }) => setup.active || items.some((item) => {
     const status = setup.job(item.id, item.version_id)?.status;
     return status === "queued" || status === "running";
@@ -52,6 +56,12 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
       const rights = inboxPlan(item, setup.metadata(item.position));
       return (rights?.publicView || rights?.privateExport) && !setup.displayReady(item);
     });
+    const previewPhotos = canPreparePreviews && setup.found && !setup.active
+      ? live.filter((item) => {
+        const job = setup.job(item.id, item.version_id);
+        return item.kind === "photo" && !item.approval && job?.status !== "queued" && job?.status !== "running";
+      }) : [];
+    const missingPreviews = previewPhotos.filter((item) => !setup.displayReady(item));
     const canWithdraw = live.some((item) => item.approval);
     const photoCount = Math.max(setup.photoCount, items.filter(({ kind }) => kind === "photo").length);
     const needsAuthorization = live.some((item) => item.kind === "photo" && !item.approval &&
@@ -69,7 +79,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
         <div className="space-y-4 border-t border-border p-4 sm:p-5">
           {!allowed && <p className="text-muted-foreground">
             {scope.sender ? "发件人与当前配置不匹配。" : "当前环境未配置投稿发件人校验。"}
-            已公开的照片仍可查看。
+            批准投稿仍需通过发件人校验。
           </p>}
           {setup.active && <p role="status">正在接收原件并准备私有预览…</p>}
           {setup.status === "needs_attention" && <p role="status">部分原件或预览准备失败。已接收的条目如下。</p>}
@@ -85,8 +95,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
               const published = item.approval?.published === true && item.approval.public_view === true && canPublish(item, false);
               const publicPhoto = photo && published;
               const uncertainPhoto = photo && !item.withdrawn_at && !item.approval && restrictions.uncertain;
-              const ready = photo && allowed && !item.withdrawn_at && item.exclusion === "none" &&
-                !restrictions.uncertain && setup.displayReady(item);
+              const privatePhoto = photo && !item.withdrawn_at;
               const localDate = rights?.localDate ?? item.local_date;
               return <li key={item.id} className="min-w-0 space-y-2 py-4 first:pt-0">
                 <h3 className="font-semibold">{photo ? "照片 " + number : "日记"}</h3>
@@ -95,21 +104,16 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
                     {published ? "已发布" : "已审核 · 私有"}
                   </p> : item.historical_approval ? <p className="text-muted-foreground">有历史审核记录</p> : null}
                 {allowed && item.approval?.source === "automatic" && !item.withdrawn_at && <p>自动批准</p>}
-                {(allowed || publicPhoto || uncertainPhoto) && (
+                {(allowed || privatePhoto) && (
                   <div className={photo ? "grid gap-3 sm:grid-cols-2 sm:gap-5" : undefined}>
                     {publicPhoto ? (
                       <InboxPreview key={item.version_id + "-public"} src={"/api/media/" + item.id}
                         alt={`照片 ${number} 公开预览`} number={number} />
-                    ) : uncertainPhoto ? <p className="rounded-lg bg-muted p-4 text-muted-foreground">
-                      用途或照片范围待确认，暂不能预览。
-                    </p> : ready ? <InboxPreview key={item.version_id + "-" + (job?.updated_at ?? "intake")}
-                      number={number} src={"/maintain/review/" + row.id + "/display?" + new URLSearchParams({
-                        item: item.id, version: item.version_id,
-                      })} /> : photo && allowed && rights && !item.withdrawn_at && <p className="rounded-lg bg-muted p-4 text-muted-foreground" role="status">
-                      {job?.status === "needs_attention" ? "私有预览准备失败"
-                        : setup.active || job?.status === "queued" || job?.status === "running"
-                          ? "正在准备私有预览…" : "私有预览待准备"}
-                    </p>}
+                    ) : privatePhoto && (
+                      <InboxPreview key={item.version_id + "-" + (job?.updated_at ?? setup.status ?? "intake")}
+                        number={number} src={reviewDisplayUrl(row.id, item.id, item.version_id)} />
+                    )}
+                    {uncertainPhoto && <p className="text-muted-foreground">用途或照片范围待确认。</p>}
                     {allowed && <div className="min-w-0 space-y-2 wrap-anywhere">
                       {localDate && <p>条目日期：<time dateTime={localDate}>{localDate}</time></p>}
                       {!photo && !item.withdrawn_at && item.diary_text &&
@@ -132,21 +136,20 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
             live.map((item) => [item.id, item.version_id, inboxPlan(item, setup.metadata(item.position))?.snapshot ?? null]))}>
             <InboxButton label="批准投稿" pendingLabel="正在批准…" />
           </form>}
-          {!waiting && photos.length > 0 && (needsDisplay
-            ? <form action={retryInbox.bind(null, row.id, photos.map((item) => ({
+          {missingPreviews.length > 0 && <form action={retryInbox.bind(null, row.id, missingPreviews.map((item) => ({
+            itemId: item.id, versionId: item.version_id,
+          })), false)}>
+            <InboxButton label={missingPreviews.some((item) => setup.job(item.id, item.version_id)?.status === "needs_attention")
+              ? "重试准备私有预览" : "准备私有预览"} pendingLabel="正在请求…" />
+          </form>}
+          {previewPhotos.length > 0 && missingPreviews.length === 0 && <details>
+            <summary className="flex min-h-11 cursor-pointer items-center underline">预览准备</summary>
+            <form className="mt-2" action={retryInbox.bind(null, row.id, previewPhotos.map((item) => ({
               itemId: item.id, versionId: item.version_id,
-            })), false)}>
-              <InboxButton label={photos.some((item) => setup.job(item.id, item.version_id)?.status === "needs_attention")
-                ? "重试准备私有预览" : "准备私有预览"} pendingLabel="正在请求…" />
+            })), true)}>
+              <InboxButton variant="secondary" label="重试准备私有预览" pendingLabel="正在请求…" />
             </form>
-            : <details>
-              <summary className="flex min-h-11 cursor-pointer items-center underline">预览准备</summary>
-              <form className="mt-2" action={retryInbox.bind(null, row.id, photos.map((item) => ({
-                itemId: item.id, versionId: item.version_id,
-              })), true)}>
-                <InboxButton variant="secondary" label="重试准备私有预览" pendingLabel="正在请求…" />
-              </form>
-            </details>)}
+          </details>}
           {canWithdraw && <form action={withdrawInbox.bind(null, row.id)}>
             <InboxButton variant="secondary" label="撤下投稿" pendingLabel="正在撤下…" />
           </form>}

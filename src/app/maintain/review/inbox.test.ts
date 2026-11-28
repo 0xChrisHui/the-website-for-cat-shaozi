@@ -134,7 +134,7 @@ it("batches the preparation queries for multiple submissions", async () => {
   }
 });
 
-it("shows only the public photo in an approved submission from a different sender", async () => {
+it("shows public and private previews to the maintainer without revealing private notes", async () => {
   scenario.approved = true;
   try {
     const html = renderToStaticMarkup(await ReviewInbox({
@@ -142,23 +142,24 @@ it("shows only the public photo in an approved submission from a different sende
     }));
     expect(html).toContain('src="/api/media/' + ids.first + '"');
     expect(html).not.toContain('/api/media/' + ids.second);
-    expect(html).not.toContain("/display?item=");
+    expect(html).toContain("/maintain/review/" + ids.submission + "/display?item=" + ids.second);
     expect(html).not.toContain(diaryText);
     expect(html).not.toContain("邮件限制：不上链");
     expect(html).not.toContain(">批准投稿</button>");
   } finally { scenario.approved = false; }
 });
 
-it("explains when an existing pending photo cannot be previewed before authorization is clarified", async () => {
+it("shows pending previews before authorization is clarified", async () => {
   scenario.uncertain = true;
   try {
     const html = renderToStaticMarkup(await ReviewInbox({
       scope: { sample: null, ready: true, source: "stage0-grok", event: null, sender: undefined },
     }));
     expect(html).toContain("待核对授权");
-    expect(html).toContain("用途或照片范围待确认，暂不能预览。");
+    expect(html).toContain("用途或照片范围待确认");
+    expect(html).toContain("/maintain/review/" + ids.submission + "/display?item=" + ids.first);
     expect(html).toContain("当前环境未配置投稿发件人校验");
-    expect(html).not.toContain("/display?item=");
+    expect(html).toContain("/maintain/review/" + ids.submission + "/display?item=" + ids.second);
     expect(html).not.toContain(">批准投稿</button>");
   } finally { scenario.uncertain = false; }
 });

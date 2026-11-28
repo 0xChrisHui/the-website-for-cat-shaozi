@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { displayKey } from "@/features/public/media-key";
-import { changeRealPreparation } from "./real-preparation";
+import { changeRealPreparation, readPrivateReviewDisplay, retryInboxDisplays } from "./real-preparation";
 import { ReviewConflict } from "./approve";
 
 vi.mock("server-only", () => ({}));
@@ -48,7 +48,6 @@ it("registers only a verified display for an ordinary photo allowed in private Z
 });
 
 it("serves only the authenticated current derivative and denies withdrawn or stale bindings", async () => {
-  const { readPrivateReviewDisplay } = await import("./real-preparation");
   const { reviewScope } = await import("./store");
   const photo = { id: itemId, version_id: versionId, version_number: 1, kind: "photo", position: 0,
     withdrawn_at: null, approval: null, exclusion: "none" };
@@ -71,4 +70,34 @@ it("serves only the authenticated current derivative and denies withdrawn or sta
   mocks.items.mockResolvedValue([{ ...photo, withdrawn_at: "2026-11-25T00:00:00Z" }]);
   await expect(readPrivateReviewDisplay(submissionId, binding, signal)).resolves.toBeNull();
   expect(mocks.read).toHaveBeenCalledOnce();
+});
+
+it("serves prepared private photos from an unmatched sender while approval remains blocked", async () => {
+  const { reviewScope } = await import("./store");
+  const scope = { ready: true, sample: null, source: "stage0-grok", event: null, sender: undefined } as const;
+  mocks.read.mockResolvedValue(Buffer.from("verified synthetic derivative"));
+  const binding = { itemId, versionId };
+  const signal = new AbortController().signal;
+  mocks.items.mockResolvedValue([{ id: itemId, version_id: versionId, kind: "photo",
+    position: 0, withdrawn_at: null, approval: null, exclusion: "explicit" }]);
+  mocks.query.mockImplementation(async (sql: string) => ({
+    rows: sql.includes("as hints") ? [{
+      positions: [{ position: 0 }], automatic_display: true, status: "done",
+      restrictions: [{ position: 0, flags: { site: true, zip: true, chain: true, uncertain: true } }],
+    }] : [],
+  }));
+  vi.mocked(reviewScope).mockResolvedValueOnce(scope);
+  await expect(readPrivateReviewDisplay(submissionId, binding, signal)).resolves.toBeInstanceOf(Buffer);
+
+  vi.mocked(reviewScope).mockResolvedValueOnce(scope);
+  await expect(changeRealPreparation(submissionId, binding, {
+    kind: "save", date: "2026-11-25", publicView: true, privateExport: true, arweave: false, nft: false,
+  })).rejects.toBeInstanceOf(ReviewConflict);
+
+  mocks.query.mockClear();
+  vi.mocked(reviewScope).mockResolvedValueOnce(scope);
+  await expect(retryInboxDisplays(submissionId, [binding], true)).resolves.toBeUndefined();
+  expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("insert into jobs"),
+    ["intake.review-display", binding]);
+  expect(mocks.query).not.toHaveBeenCalledWith(expect.stringContaining("insert into item_usage_rights"), expect.anything());
 });
