@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { readRealPreparation } from "@/features/review/mail-preparation";
+import { readRealPreparations } from "@/features/review/mail-preparation";
 import { inboxPlan } from "@/features/review/inbox-policy";
-import { canPublish, inboxPageSize, readInboxSubmissions, readReviewItems, type ReviewScope } from "@/features/review/store";
+import { canPublish, inboxPageSize, readInboxSubmissions, type ReviewScope } from "@/features/review/store";
 import { withWebsiteDb } from "@/lib/supabase/database";
+import { readReviewItemsBySubmission } from "@/features/review/review-rows";
 import { readAutoApproval } from "@/features/review/auto-settings";
 import { confirmInbox, retryInbox, setAutoApproval, withdrawInbox } from "./actions";
 import { InboxButton, InboxPreview, RefreshInbox } from "./inbox-controls";
@@ -23,12 +24,14 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
     const rows = await readInboxSubmissions(db, scope, page);
     const morePending = rows.filter(({ pending }) => pending).length > inboxPageSize;
     const visible = morePending ? rows.filter(({ pending }, index) => !pending || index < inboxPageSize) : rows;
-    const entries = [];
-    for (const row of visible) {
-      const items = await readReviewItems(db, row.id);
-      const setup = await readRealPreparation(db, row.id, row.received_at);
-      entries.push({ row, items, setup, allowed: Boolean(scope.sender && row.sender_hash === scope.sender) });
-    }
+    const items = await readReviewItemsBySubmission(db, visible.map(({ id }) => id));
+    const preparations = await readRealPreparations(db, visible);
+    const entries = visible.map((row) => ({
+      row,
+      items: items.get(row.id) ?? [],
+      setup: preparations.get(row.id)!,
+      allowed: Boolean(scope.sender && row.sender_hash === scope.sender),
+    }));
     return { entries, morePending, autoApproval: await readAutoApproval(db) };
   });
   const active = entries.some(({ setup, items }) => setup.active || items.some((item) => {

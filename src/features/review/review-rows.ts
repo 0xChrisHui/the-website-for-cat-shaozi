@@ -16,6 +16,25 @@ export type ReviewItem = Pick<BusinessRow<"items">, "id" | "kind" | "position" |
   approval: BusinessRow<"approvals"> | null;
 };
 
+const reviewItemsSql = `
+i.id, i.kind, i.position, i.withdrawn_at, i.exclusion,
+           v.id as version_id, v.version as version_number,
+           exists (select 1 from approvals old where old.item_id=i.id and old.version_id<>v.id) as historical_approval,
+           to_char(v.local_date, 'YYYY-MM-DD') as local_date, v.diary_text,
+           d.title, d.processed_media_ref, to_jsonb(r) as rights,
+           case when a.item_id is not null then
+             to_jsonb(a) || jsonb_build_object('approved_at', to_char(a.approved_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+           end as approval
+    from items i
+    join lateral (
+      select id, version, local_date, diary_text from item_versions
+      where item_id = i.id order by version desc limit 1
+    ) v on true
+    left join item_usage_rights r on r.item_id = i.id
+    left join item_version_display d on d.version_id = v.id
+    left join approvals a on a.item_id = i.id and a.version_id = v.id
+`;
+
 export async function readReviewItems(db: PoolClient, id: string, lock = false) {
   if (lock) {
     // Parent locks block concurrent FK inserts while the current versions are selected.
@@ -35,24 +54,18 @@ export async function readReviewItems(db: PoolClient, id: string, lock = false) 
     `, [id]);
   }
   return queryRows<ReviewItem>(db, `
-    select i.id, i.kind, i.position, i.withdrawn_at, i.exclusion,
-           v.id as version_id, v.version as version_number,
-           exists (select 1 from approvals old where old.item_id=i.id and old.version_id<>v.id) as historical_approval,
-           to_char(v.local_date, 'YYYY-MM-DD') as local_date, v.diary_text,
-           d.title, d.processed_media_ref, to_jsonb(r) as rights,
-           case when a.item_id is not null then
-             to_jsonb(a) || jsonb_build_object('approved_at', to_char(a.approved_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
-           end as approval
-    from items i
-    join lateral (
-      select id, version, local_date, diary_text from item_versions
-      where item_id = i.id order by version desc limit 1
-    ) v on true
-    left join item_usage_rights r on r.item_id = i.id
-    left join item_version_display d on d.version_id = v.id
-    left join approvals a on a.item_id = i.id and a.version_id = v.id
+    select ${reviewItemsSql}
     where i.submission_id = $1 order by i.position
   `, [id]);
+}
+
+export async function readReviewItemsBySubmission(db: PoolClient, ids: string[]) {
+  if (ids.length === 0) return new Map<string, ReviewItem[]>();
+  const rows = await queryRows<ReviewItem & { submission_id: string }>(db, `
+    select i.submission_id, ${reviewItemsSql}
+    where i.submission_id = any($1::uuid[]) order by i.submission_id, i.position
+  `, [ids]);
+  return Map.groupBy(rows, (row) => row.submission_id);
 }
 
 export function canPublish(item: ReviewItem, sample: boolean) {

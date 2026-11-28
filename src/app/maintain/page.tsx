@@ -1,30 +1,41 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { diagnosticsEnabled } from "@/lib/env";
-import { readSample } from "@/features/foundation/samples";
 import { maintainNavigation } from "@/lib/maintain-navigation";
-import { exportAccess, readExportStatus } from "@/features/exports/access";
+import { readExportStatus } from "@/features/exports/access";
 import { reviewScope } from "@/features/review/store";
 import { ReviewInbox } from "./review/inbox";
 import { ExportControls } from "./exports/controls";
 
+const showExports = maintainNavigation.some(({ path, flag }) => path === "/maintain/exports" && flag.delivered);
+
+async function SnapshotStatus() {
+  const snapshot = await readExportStatus(null).catch(() => ({ unavailable: true as const }));
+  return <section className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-5" aria-labelledby="exports-heading">
+    <h2 id="exports-heading" className="font-heading text-xl font-semibold">离线快照</h2>
+    {"unavailable" in snapshot ? <p role="status">离线快照暂不可用。</p> : <ExportControls {...snapshot} />}
+  </section>;
+}
+
 export default async function MaintainPage({ searchParams }: { searchParams: Promise<{ status?: string; inboxPage?: string }> }) {
-  const sample = await readSample();
   const scope = await reviewScope();
   if (!scope) redirect("/maintain/login");
+  const { sample } = scope;
   if (!sample) {
-    const access = await exportAccess();
-    const snapshot = access && await readExportStatus(null).catch(() => ({ unavailable: true as const }));
     const { status, inboxPage } = await searchParams;
     const page = inboxPage && /^[1-9]\d{0,5}$/.test(inboxPage) ? Number(inboxPage) : 1;
     return <section className="review-workspace space-y-8 py-6">
       <h1 className="font-heading text-3xl font-semibold">维护后台</h1>
-      <ReviewInbox scope={scope} status={status} page={page} />
-      {snapshot && <section className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-5" aria-labelledby="exports-heading">
-        <h2 id="exports-heading" className="font-heading text-xl font-semibold">离线快照</h2>
-        {"unavailable" in snapshot ? <p role="status">离线快照暂不可用。</p> : <ExportControls {...snapshot} />}
-      </section>}
+      <Suspense key={page} fallback={<p role="status" className="rounded-lg bg-muted p-5 text-muted-foreground">正在加载待审核投稿…</p>}>
+        <ReviewInbox scope={scope} status={status} page={page} />
+      </Suspense>
+      {showExports && (
+        <Suspense fallback={<p role="status" className="text-muted-foreground">正在读取离线快照状态…</p>}>
+          <SnapshotStatus />
+        </Suspense>
+      )}
       <form action="/maintain/logout" method="post"><Button type="submit" variant="secondary">退出登录</Button></form>
     </section>;
   }
