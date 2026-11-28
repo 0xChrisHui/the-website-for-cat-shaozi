@@ -8,7 +8,6 @@ import { displayKey } from "@/features/public/media-key";
 import { readSiteEnv } from "@/lib/env";
 import { withWebsiteDb } from "@/lib/supabase/database";
 import { readRealPreparation, readReviewBlob } from "./mail-preparation";
-import { inboxRights } from "./inbox-policy";
 import { ReviewConflict } from "./approve";
 import { testPhotoReview } from "./photo-decision";
 import { findSubmission, readReviewItems, reviewScope, type ReviewScope } from "./store";
@@ -66,6 +65,10 @@ export async function changeRealPreparation(submissionId: string, binding: unkno
   });
 }
 
+export function reviewDisplayUrl(submissionId: string, itemId: string, versionId: string) {
+  return "/maintain/review/" + submissionId + "/display?" + new URLSearchParams({ item: itemId, version: versionId });
+}
+
 export async function readPrivateReviewDisplay(submissionId: string, binding: unknown, signal: AbortSignal) {
   const scope = await reviewScope();
   const parsed = displayBinding.safeParse(binding);
@@ -73,11 +76,10 @@ export async function readPrivateReviewDisplay(submissionId: string, binding: un
   const { itemId, versionId } = parsed.data;
   return withWebsiteDb(async (db) => {
     const submission = await findSubmission(db, scope, submissionId);
-    if (!submission || !realPreparationEnabled(scope, submission.sender_hash)) return null;
+    if (!submission) return null;
     const item = (await readReviewItems(db, submissionId)).find(({ id }) => id === itemId);
-    if (!item || item.version_id !== versionId || item.withdrawn_at || item.kind !== "photo" || item.exclusion !== "none") return null;
-    const setup = await readRealPreparation(db, submissionId, submission.received_at);
-    if (!setup.found || setup.metadata(item.position).restrictions.uncertain || !setup.displayReady(item)) return null;
+    if (!item || item.version_id !== versionId || item.withdrawn_at || item.kind !== "photo") return null;
+    // Only read the worker's verified, metadata-free private derivative for the exact version.
     return readReviewBlob(displayKey(itemId, versionId), signal);
   });
 }
@@ -95,19 +97,19 @@ async function queueDisplay(db: PoolClient, itemId: string, versionId: string,
 
 export async function retryInboxDisplays(submissionId: string, binding: unknown, force: boolean) {
   const scope = await reviewScope();
-  if (!scope?.ready || scope.sample || !z.uuid().safeParse(submissionId).success) throw new ReviewConflict();
+  if (!scope?.ready || !testPhotoReview(readSiteEnv().environment, scope.sample) ||
+      !z.uuid().safeParse(submissionId).success) throw new ReviewConflict();
   const versions = z.array(displayBinding).min(1).max(100).parse(binding);
   return withWebsiteDb(async (db) => {
     await lockExportScope(db, null);
     const submission = await findSubmission(db, scope, submissionId, true);
-    if (!submission || !realPreparationEnabled(scope, submission.sender_hash)) throw new ReviewConflict();
+    if (!submission) throw new ReviewConflict();
     const items = await readReviewItems(db, submissionId, true);
     const setup = await readRealPreparation(db, submissionId, submission.received_at);
     if (!setup.found || setup.active) throw new ReviewConflict();
     for (const { itemId, versionId } of versions) {
       const item = items.find(({ id }) => id === itemId);
-      if (!item || item.version_id !== versionId || item.kind !== "photo" || item.exclusion !== "none" ||
-          !inboxRights(item, setup.metadata(item.position).restrictions)) throw new ReviewConflict();
+      if (!item || item.version_id !== versionId || item.kind !== "photo" || item.withdrawn_at || item.approval) throw new ReviewConflict();
       if (force || !setup.displayReady(item)) await queueDisplay(db, itemId, versionId, setup.job(itemId, versionId));
     }
   });

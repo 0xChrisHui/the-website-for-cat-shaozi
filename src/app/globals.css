@@ -1,15 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafaf9;
-  --foreground: #1c1917;
-  --primary: #292524;
-  --primary-foreground: #fafaf9;
-  --muted: #e7e5e4;
-  --muted-foreground: #44403c;
-  --border: #78716c;
-  --accent: #d6d3d1;
+  --background: #faf8f3;
+  --foreground: #29241e;
+  --primary: #5e4030;
+  --primary-foreground: #fffaf4;
+  --muted: #eee8df;
+  --muted-foreground: #655a50;
+  --border: #c9bbad;
+  --accent: #e6dacf;
+  --surface: #fffdf8;
+  --focus: #8a4b31;
   --heading-family: system-ui, sans-serif;
+  --public-heading-family: "Noto Serif CJK SC", "Songti SC", "SimSun", serif;
+  --public-width: 70rem;
+  --review-width: 58rem;
+  --reading-width: 45rem;
 }
 
 @theme inline {
@@ -23,7 +29,104 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
   --color-accent: var(--accent);
+  --color-surface: var(--surface);
   --font-heading: var(--heading-family);
 }
 
-body { background: var(--background); color: var(--foreground); font-family: system-ui, sans-serif; }
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, sans-serif;
+}
+
+body:has(.review-workspace) {
+  --background: #f4f6f9;
+  --foreground: #182233;
+  --primary: #0958d9;
+  --primary-foreground: #ffffff;
+  --muted: #edf1f7;
+  --muted-foreground: #49566a;
+  --border: #d6dfea;
+  --accent: #e6f1ff;
+  --surface: #ffffff;
+  --focus: #0958d9;
+  --review-warning: #fff3d6;
+  --review-warning-foreground: #764906;
+  --review-success: #e6f5ed;
+  --review-success-foreground: #146142;
+}
+
+.review-status {
+  display: inline-block;
+  padding: .125rem .5rem;
+  border-radius: .25rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.review-status[data-tone="pending"] {
+  background: var(--review-warning);
+  color: var(--review-warning-foreground);
+}
+
+.review-status[data-tone="complete"] {
+  background: var(--review-success);
+  color: var(--review-success-foreground);
+}
+
+.review-workspace details[open] > summary {
+  background: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.site-main { max-width: var(--reading-width); padding-block: 1.25rem; }
+.site-main:has(> .public-page) { max-width: var(--public-width); }
+.site-main:has(> .review-workspace) { max-width: var(--review-width); }
+.public-title {
+  font-family: var(--public-heading-family);
+  font-size: clamp(2.5rem, 6.4vw, 5rem);
+  font-weight: 700;
+  line-height: 1.17;
+  letter-spacing: .04em;
+}
+
+.photo-home-intro {
+  display: grid;
+  justify-items: center;
+  gap: 1.25rem;
+  padding-block: clamp(2.5rem, 6vw, 4.75rem) clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.photo-frame {
+  display: grid;
+  place-items: center;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  border-radius: .375rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.photo-frame > img { width: 100%; height: 100%; min-height: 0; }
+
+.timeline-intro { padding-block: 1.75rem 2rem; }
+.timeline-day, .timeline-items { display: grid; gap: 1rem; }
+.timeline-diary { grid-column: 1 / -1; max-width: 42rem; }
+
+@media (min-width: 48rem) {
+  .photo-frame-cover { aspect-ratio: 2 / 1; max-height: 32rem; }
+  .timeline-intro { padding-block: 2.5rem 3rem; }
+  .timeline-day { grid-template-columns: 8rem minmax(0, 1fr); gap: 1.5rem; }
+  .timeline-items { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
+  .timeline-items > :only-child { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
