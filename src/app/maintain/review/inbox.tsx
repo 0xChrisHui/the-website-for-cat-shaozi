@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { readRealPreparations } from "@/features/review/mail-preparation";
 import { inboxPlan } from "@/features/review/inbox-policy";
-import { canPublish, inboxPageSize, readInboxSubmissions, type ReviewScope } from "@/features/review/store";
+import { inboxPageSize, readInboxSubmissions, type ReviewScope } from "@/features/review/store";
 import { withWebsiteDb } from "@/lib/supabase/database";
-import { readReviewItemsBySubmission } from "@/features/review/review-rows";
+import { canPublish, readReviewItemsBySubmission } from "@/features/review/review-rows";
 import { readAutoApproval } from "@/features/review/auto-settings";
 import { confirmInbox, retryInbox, setAutoApproval, withdrawInbox } from "./actions";
 import { InboxButton, InboxPreview, RefreshInbox } from "./inbox-controls";
@@ -65,7 +65,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
           <span className="review-status text-sm" data-tone={row.pending ? "pending" : label === "已审核" ? "complete" : undefined}>{label}</span>
         </summary>
         <div className="space-y-4 border-t border-border p-4 sm:p-5">
-          {!allowed && <p>发件人未通过校验。</p>}
+          {!allowed && <p className="text-muted-foreground">发件人与当前配置不匹配。仍可查看已公开的照片。</p>}
           {setup.active && <p role="status">正在接收原件并准备私有预览…</p>}
           {setup.status === "needs_attention" && <p role="status">部分原件或预览准备失败。已接收的条目如下。</p>}
           <ul className="divide-y divide-border">
@@ -77,27 +77,32 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
               const { restrictions } = metadata;
               const rights = inboxPlan(item, metadata);
               const job = setup.job(item.id, item.version_id);
-              const ready = allowed && !item.withdrawn_at && item.exclusion === "none" &&
+              const published = item.approval?.published === true && item.approval.public_view === true && canPublish(item, false);
+              const publicPhoto = photo && published;
+              const ready = photo && allowed && !item.withdrawn_at && item.exclusion === "none" &&
                 !restrictions.uncertain && setup.displayReady(item);
               const localDate = rights?.localDate ?? item.local_date;
               return <li key={item.id} className="min-w-0 space-y-2 py-4 first:pt-0">
                 <h3 className="font-semibold">{photo ? "照片 " + number : "日记"}</h3>
                 {item.withdrawn_at ? <p className="text-muted-foreground">已撤下</p>
                   : item.approval ? <p className="text-muted-foreground">
-                    {item.approval.published && canPublish(item, false) ? "已发布" : "已审核 · 私有"}
+                    {published ? "已发布" : "已审核 · 私有"}
                   </p> : item.historical_approval ? <p className="text-muted-foreground">有历史审核记录</p> : null}
                 {allowed && item.approval?.source === "automatic" && !item.withdrawn_at && <p>自动批准</p>}
-                {allowed && <>
+                {(allowed || publicPhoto) && (
                   <div className={photo ? "grid gap-3 sm:grid-cols-2 sm:gap-5" : undefined}>
-                    {photo && (ready ? <InboxPreview key={item.version_id + "-" + (job?.updated_at ?? "intake")}
+                    {publicPhoto ? (
+                      <InboxPreview key={item.version_id + "-public"} src={"/api/media/" + item.id}
+                        alt={`照片 ${number} 公开预览`} number={number} />
+                    ) : ready ? <InboxPreview key={item.version_id + "-" + (job?.updated_at ?? "intake")}
                       number={number} src={"/maintain/review/" + row.id + "/display?" + new URLSearchParams({
                         item: item.id, version: item.version_id,
-                      })} /> : rights && !item.withdrawn_at && <p className="rounded-lg bg-muted p-4 text-muted-foreground" role="status">
+                      })} /> : photo && allowed && rights && !item.withdrawn_at && <p className="rounded-lg bg-muted p-4 text-muted-foreground" role="status">
                       {job?.status === "needs_attention" ? "私有预览准备失败"
                         : setup.active || job?.status === "queued" || job?.status === "running"
                           ? "正在准备私有预览…" : "私有预览待准备"}
-                    </p>)}
-                    <div className="min-w-0 space-y-2 wrap-anywhere">
+                    </p>}
+                    {allowed && <div className="min-w-0 space-y-2 wrap-anywhere">
                       {localDate && <p>条目日期：<time dateTime={localDate}>{localDate}</time></p>}
                       {!photo && !item.withdrawn_at && item.diary_text &&
                         <p className="whitespace-pre-wrap wrap-anywhere">{item.diary_text}</p>}
@@ -107,9 +112,9 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
                       {restrictions.zip && <p>邮件限制：不纳入私有 ZIP</p>}
                       {restrictions.chain && <p>邮件限制：不上链（归档和 NFT）</p>}
                       {restrictions.nft && !restrictions.chain && <p>邮件限制：不铸造 NFT</p>}
-                    </div>
+                    </div>}
                   </div>
-                </>}
+                )}
               </li>;
             })}
           </ul>

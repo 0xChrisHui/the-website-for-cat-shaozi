@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import { ReviewInbox } from "./inbox";
+import { displayKey } from "@/features/public/media-key";
 
 const scenario = vi.hoisted(() => ({ approved: false, auto: false, multiple: false, preparationQueries: 0, itemQueries: 0 }));
 const diaryText = "今天的日记第一段。\n\n今天的日记第二段。";
@@ -24,12 +25,13 @@ vi.mock("@/features/review/store", () => ({
   readInboxSubmissions: async () => [{
     id: ids.submission, received_at: new Date("2026-11-25T00:00:00Z"), sender_hash: "synthetic", pending: !scenario.approved,
   }, ...(scenario.multiple ? [{ id: ids.anotherSubmission, received_at: new Date("2026-11-24T00:00:00Z"), sender_hash: "synthetic", pending: false }] : [])],
-  canPublish: () => true,
 }));
 const reviewItems = () => [
-    ...[[ids.first, ids.firstVersion], [ids.second, ids.secondVersion]].map(([id, version_id], position) => ({
-      id, version_id, position, version_number: 1, kind: "photo", exclusion: "none", withdrawn_at: null, rights: null,
-      approval: scenario.approved ? { published: true } : null,
+    ...([[ids.first, ids.firstVersion], [ids.second, ids.secondVersion]] as const).map(([id, version_id], position) => ({
+      id, version_id, position, version_number: 1, kind: "photo", exclusion: "none", withdrawn_at: null,
+      local_date: "2026-01-02", processed_media_ref: displayKey(id, version_id),
+      rights: scenario.approved ? { public_view: true } : null,
+      approval: scenario.approved ? { published: true, public_view: position === 0 } : null,
     })),
     { id: "synthetic-diary", version_id: "synthetic-diary-version", position: 2, version_number: 1,
       kind: "diary", exclusion: "none", withdrawn_at: null, rights: null, diary_text: diaryText,
@@ -127,4 +129,19 @@ it("batches the preparation queries for multiple submissions", async () => {
   } finally {
     scenario.multiple = false;
   }
+});
+
+it("shows only the public photo in an approved submission from a different sender", async () => {
+  scenario.approved = true;
+  try {
+    const html = renderToStaticMarkup(await ReviewInbox({
+      scope: { sample: null, ready: true, source: "stage0-grok", event: null, sender: "unmatched" },
+    }));
+    expect(html).toContain('src="/api/media/' + ids.first + '"');
+    expect(html).not.toContain('/api/media/' + ids.second);
+    expect(html).not.toContain("/display?item=");
+    expect(html).not.toContain(diaryText);
+    expect(html).not.toContain("邮件限制：不上链");
+    expect(html).not.toContain(">批准投稿</button>");
+  } finally { scenario.approved = false; }
 });
