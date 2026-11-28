@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { ReviewInbox } from "./inbox";
 import { displayKey } from "@/features/public/media-key";
 
-const scenario = vi.hoisted(() => ({ approved: false, auto: false, multiple: false, preparationQueries: 0, itemQueries: 0 }));
+const scenario = vi.hoisted(() => ({ approved: false, auto: false, multiple: false, uncertain: false, preparationQueries: 0, itemQueries: 0 }));
 const diaryText = "今天的日记第一段。\n\n今天的日记第二段。";
 
 const ids = vi.hoisted(() => ({
@@ -51,6 +51,9 @@ vi.mock("@/lib/supabase/database", () => ({
     }] : sql.includes("as hints") ? [{
       submission_id: ids.submission, positions: [{ position: 0 }, { position: 1 }], automatic_display: true, status: "done",
       hints: { items: [{ position: 1, exclusionQuote: "第 2 张不要上链" }] },
+      restrictions: scenario.uncertain
+        ? [{ position: 0, flags: { site: false, zip: false, chain: false, uncertain: true } }]
+        : undefined,
     }] : [] };
     },
   }),
@@ -144,4 +147,18 @@ it("shows only the public photo in an approved submission from a different sende
     expect(html).not.toContain("邮件限制：不上链");
     expect(html).not.toContain(">批准投稿</button>");
   } finally { scenario.approved = false; }
+});
+
+it("explains when an existing pending photo cannot be previewed before authorization is clarified", async () => {
+  scenario.uncertain = true;
+  try {
+    const html = renderToStaticMarkup(await ReviewInbox({
+      scope: { sample: null, ready: true, source: "stage0-grok", event: null, sender: undefined },
+    }));
+    expect(html).toContain("待核对授权");
+    expect(html).toContain("用途或照片范围待确认，暂不能预览。");
+    expect(html).toContain("当前环境未配置投稿发件人校验");
+    expect(html).not.toContain("/display?item=");
+    expect(html).not.toContain(">批准投稿</button>");
+  } finally { scenario.uncertain = false; }
 });

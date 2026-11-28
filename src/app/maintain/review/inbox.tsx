@@ -54,8 +54,10 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
     });
     const canWithdraw = live.some((item) => item.approval);
     const photoCount = Math.max(setup.photoCount, items.filter(({ kind }) => kind === "photo").length);
+    const needsAuthorization = live.some((item) => item.kind === "photo" && !item.approval &&
+      setup.metadata(item.position).restrictions.uncertain);
     const label = row.pending
-      ? setup.active || waiting ? "正在准备私有预览" : "待审核"
+      ? setup.active || waiting ? "正在准备私有预览" : needsAuthorization ? "待核对授权" : "待审核"
       : live.some((item) => item.approval) ? "已审核" : "已撤下";
     return <li key={row.id} className="rounded-lg border border-border bg-surface">
       <details open={open}>
@@ -65,7 +67,10 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
           <span className="review-status text-sm" data-tone={row.pending ? "pending" : label === "已审核" ? "complete" : undefined}>{label}</span>
         </summary>
         <div className="space-y-4 border-t border-border p-4 sm:p-5">
-          {!allowed && <p className="text-muted-foreground">发件人与当前配置不匹配。仍可查看已公开的照片。</p>}
+          {!allowed && <p className="text-muted-foreground">
+            {scope.sender ? "发件人与当前配置不匹配。" : "当前环境未配置投稿发件人校验。"}
+            已公开的照片仍可查看。
+          </p>}
           {setup.active && <p role="status">正在接收原件并准备私有预览…</p>}
           {setup.status === "needs_attention" && <p role="status">部分原件或预览准备失败。已接收的条目如下。</p>}
           <ul className="divide-y divide-border">
@@ -79,6 +84,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
               const job = setup.job(item.id, item.version_id);
               const published = item.approval?.published === true && item.approval.public_view === true && canPublish(item, false);
               const publicPhoto = photo && published;
+              const uncertainPhoto = photo && !item.withdrawn_at && !item.approval && restrictions.uncertain;
               const ready = photo && allowed && !item.withdrawn_at && item.exclusion === "none" &&
                 !restrictions.uncertain && setup.displayReady(item);
               const localDate = rights?.localDate ?? item.local_date;
@@ -89,12 +95,14 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
                     {published ? "已发布" : "已审核 · 私有"}
                   </p> : item.historical_approval ? <p className="text-muted-foreground">有历史审核记录</p> : null}
                 {allowed && item.approval?.source === "automatic" && !item.withdrawn_at && <p>自动批准</p>}
-                {(allowed || publicPhoto) && (
+                {(allowed || publicPhoto || uncertainPhoto) && (
                   <div className={photo ? "grid gap-3 sm:grid-cols-2 sm:gap-5" : undefined}>
                     {publicPhoto ? (
                       <InboxPreview key={item.version_id + "-public"} src={"/api/media/" + item.id}
                         alt={`照片 ${number} 公开预览`} number={number} />
-                    ) : ready ? <InboxPreview key={item.version_id + "-" + (job?.updated_at ?? "intake")}
+                    ) : uncertainPhoto ? <p className="rounded-lg bg-muted p-4 text-muted-foreground">
+                      用途或照片范围待确认，暂不能预览。
+                    </p> : ready ? <InboxPreview key={item.version_id + "-" + (job?.updated_at ?? "intake")}
                       number={number} src={"/maintain/review/" + row.id + "/display?" + new URLSearchParams({
                         item: item.id, version: item.version_id,
                       })} /> : photo && allowed && rights && !item.withdrawn_at && <p className="rounded-lg bg-muted p-4 text-muted-foreground" role="status">
