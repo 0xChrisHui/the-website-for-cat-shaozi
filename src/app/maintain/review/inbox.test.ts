@@ -100,5 +100,5 @@ it("puts collapsible pending submissions before automatic approval settings", as
     scope: { sample: null, ready: true, source: "stage0-grok", event: null, sender: "synthetic" },
   }));
   expect(html.indexOf("待审核投稿</h2>")).toBeLessThan(html.indexOf("自动批准 · 已关闭"));
-  expect(html).toMatch(/<details[^>]*><summary[^>]*>.*?2 张照片.*?待审核/);
+  expect(html).toMatch(/<details open=""><summary[^>]*>.*?2 张照片.*?待审核/);
 });

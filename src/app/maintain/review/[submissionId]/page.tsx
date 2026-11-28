@@ -98,9 +98,13 @@ export default async function ReviewDetail({ params, searchParams }: {
         const restrictions = setup?.metadata(item.position).restrictions;
         const editable = senderAllowed && !item.approval && !item.withdrawn_at && !item.historical_approval && !restrictions?.uncertain;
         const publishable = canPublish(item, Boolean(scope.sample));
+        const samplePreview = scope.sample && senderAllowed && item.kind === "photo" && publishable;
         return <fieldset className="min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-5" key={item.id}>
           <legend>{item.title || (item.kind === "photo" ? "照片" : "日记")} · {item.position + 1}</legend>
-          {item.local_date && <time dateTime={item.local_date}>{item.local_date}</time>}
+          {samplePreview && <div className="max-w-sm">
+            <InboxPreview src="/timeline/sample-photo/nap" alt="合成授权照片预览" number={item.position + 1} />
+          </div>}
+          {item.local_date && <p className="text-sm text-muted-foreground">条目日期：<time dateTime={item.local_date}>{item.local_date}</time></p>}
           {item.kind === "diary" && <p className="whitespace-pre-wrap wrap-anywhere">{item.diary_text}</p>}
           {item.withdrawn_at ? <p>已撤下</p>
             : item.approval ? <p>{item.approval.published && publishable ? "已发布" : "私有"}</p>

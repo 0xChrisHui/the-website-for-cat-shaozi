@@ -10,6 +10,12 @@ if (flag.delivered) {
     await page.getByRole("button", { name: "准备审核样本" }).click();
     await expect(page.getByRole("link", { name: /待审核/ })).toBeVisible({ timeout: 20_000 });
     await page.getByRole("link", { name: /待审核/ }).click();
+    const attachment = page.getByRole("group", { name: /合成授权照片/ }).getByRole("img");
+    await expect(attachment).toBeVisible();
+    await expect.poll(() => attachment.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+    await expect(page.getByRole("group", { name: /合成私有照片/ }).getByRole("img")).toHaveCount(0);
+    await info.attach("审核详情", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+    await assertPage(page, pageErrors, info);
     await page.getByRole("group", { name: /合成授权照片/ }).getByRole("checkbox", { name: "站内发布" }).check();
     await page.getByRole("button", { name: "确认审核" }).click();
     await expect(page.getByRole("status")).toHaveText("审核已确认。", { timeout: 15_000 });

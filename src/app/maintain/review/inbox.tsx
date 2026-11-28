@@ -36,7 +36,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
     return status === "queued" || status === "running";
   }));
 
-  function card({ row, items, setup, allowed }: (typeof entries)[number]) {
+  function card({ row, items, setup, allowed }: (typeof entries)[number], open = false) {
     const live = items.filter((item) => !item.withdrawn_at);
     const candidates = allowed && setup.found && !setup.active
       ? live.filter((item) => inboxPlan(item, setup.metadata(item.position))) : [];
@@ -55,10 +55,11 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
       ? setup.active || waiting ? "正在准备私有预览" : "待审核"
       : live.some((item) => item.approval) ? "已审核" : "已撤下";
     return <li key={row.id} className="rounded-lg border border-border bg-surface">
-      <details>
+      <details open={open}>
         <summary className="min-h-11 cursor-pointer rounded-lg px-4 py-3 font-medium hover:bg-muted">
           <time dateTime={row.received_at.toISOString()}>{receivedTime.format(row.received_at)}</time>
-          <span className="ml-3 text-sm text-muted-foreground">{photoCount} 张照片 · {label}</span>
+          <span className="ml-3 text-sm text-muted-foreground">{photoCount} 张照片</span>{" "}
+          <span className="review-status text-sm" data-tone={row.pending ? "pending" : label === "已审核" ? "complete" : undefined}>{label}</span>
         </summary>
         <div className="space-y-4 border-t border-border p-4 sm:p-5">
           {!allowed && <p>发件人未通过校验。</p>}
@@ -144,8 +145,11 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
     {(active || (autoApproval && pending.length > 0)) && <RefreshInbox />}
     {status && Object.hasOwn(messages, status) && <p role="status">{messages[status]}</p>}
     <section className="space-y-4" aria-labelledby="pending-heading">
-      <h2 id="pending-heading" className="font-heading text-xl font-semibold">待审核投稿</h2>
-      {pending.length ? <ul className="space-y-3">{pending.map(card)}</ul> : <p className="rounded-lg bg-muted p-5 text-muted-foreground">暂无待审核投稿。</p>}
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="pending-heading" className="font-heading text-xl font-semibold">待审核投稿</h2>
+        {pending.length > 0 && <span className="text-sm text-muted-foreground">本页 {pending.length} 封</span>}
+      </div>
+      {pending.length ? <ul className="space-y-3">{pending.map((entry, index) => card(entry, index === 0))}</ul> : <p className="rounded-lg bg-muted p-5 text-muted-foreground">暂无待审核投稿。</p>}
       {(page > 1 || morePending) && <nav aria-label="待审核投稿分页" className="flex flex-wrap gap-4">
         {page > 1 && <Link href={"/maintain?inboxPage=" + (page - 1)} className="underline">较新投稿</Link>}
         {morePending && <Link href={"/maintain?inboxPage=" + (page + 1)} className="underline">较早投稿</Link>}
@@ -153,7 +157,7 @@ export async function ReviewInbox({ scope, status, page = 1 }: { scope: ReviewSc
     </section>
     <section className="space-y-3" aria-labelledby="reviewed-heading">
       <h2 id="reviewed-heading" className="font-heading text-xl font-semibold">最近审核记录</h2>
-      {reviewed.length ? <ul className="space-y-3">{reviewed.map(card)}</ul> : <p className="text-muted-foreground">暂无审核记录。</p>}
+      {reviewed.length ? <ul className="space-y-3">{reviewed.map((entry) => card(entry))}</ul> : <p className="text-muted-foreground">暂无审核记录。</p>}
     </section>
     <form action={setAutoApproval.bind(null, !autoApproval)} className="space-y-2 rounded-lg border border-border bg-surface p-4 sm:p-5">
       <p className="font-semibold">自动批准 · {autoApproval ? "已开启" : "已关闭"}</p>

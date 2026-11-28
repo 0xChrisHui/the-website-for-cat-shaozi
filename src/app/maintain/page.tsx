@@ -39,9 +39,13 @@ export default async function MaintainPage({ searchParams }: { searchParams: Pro
     <section className="review-workspace space-y-8 py-6">
       <h1 className="font-heading text-3xl font-semibold">维护后台</h1>
       {links.length > 0 && (
-        <nav aria-label="维护操作">
+        <nav aria-label="维护操作" className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
+          <p className="rounded-md bg-muted px-4 py-3 text-sm text-muted-foreground">样本模式。进入「审核投稿」即可准备合成稿并查看附件预览。</p>
+          <Link href="/maintain/review" className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground">
+            审核投稿
+          </Link>
           <ul className="grid gap-3 sm:grid-cols-2">
-            {links.map(({ name, path }) => (
+            {links.filter(({ path }) => path !== "/maintain/review").map(({ name, path }) => (
               <li key={path}>
                 <Link href={path} className="block rounded-lg border border-border p-4 font-semibold underline hover:bg-muted">
                   {name}

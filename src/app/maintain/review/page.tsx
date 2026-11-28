@@ -30,7 +30,7 @@ export default async function ReviewPage() {
     <ul className="divide-y divide-border rounded-lg border border-border bg-surface empty:hidden">
       {rows.map(({ id, received_at, pending }) => <li key={id}>
         <Link className="flex min-h-11 flex-wrap items-center justify-between gap-x-4 px-4 py-3 underline-offset-4 hover:bg-muted hover:underline" href={"/maintain/review/" + id}>
-          <span className="font-semibold">{pending ? "待审核" : "查看审核记录"}</span><time className="text-muted-foreground" dateTime={received_at.toISOString()}>{receivedTime.format(received_at)}</time>
+          <span className="review-status" data-tone={pending ? "pending" : undefined}>{pending ? "待审核" : "查看审核记录"}</span><time className="text-muted-foreground" dateTime={received_at.toISOString()}>{receivedTime.format(received_at)}</time>
         </Link>
       </li>)}
     </ul>

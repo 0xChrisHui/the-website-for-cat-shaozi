@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ failed?: string }> }) {
   const { failed } = await searchParams;
-  return <>
+  return <section className="review-workspace space-y-5 py-6">
     <h1 className="font-heading text-2xl">维护者登录</h1>
     {failed && <p role="alert">登录失败，请检查账号和密码。</p>}
     <form action={login} className="grid max-w-sm gap-3">
@@ -16,5 +16,5 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <Button type="submit">登录</Button>
     </form>
     {diagnosticsEnabled() && <form action={sampleLogin}><Button type="submit">样本登录</Button></form>}
-  </>;
+  </section>;
 }

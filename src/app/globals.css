@@ -39,6 +39,46 @@ body {
   font-family: system-ui, sans-serif;
 }
 
+body:has(.review-workspace) {
+  --background: #f4f6f9;
+  --foreground: #182233;
+  --primary: #0958d9;
+  --primary-foreground: #ffffff;
+  --muted: #edf1f7;
+  --muted-foreground: #49566a;
+  --border: #d6dfea;
+  --accent: #e6f1ff;
+  --surface: #ffffff;
+  --focus: #0958d9;
+  --review-warning: #fff3d6;
+  --review-warning-foreground: #764906;
+  --review-success: #e6f5ed;
+  --review-success-foreground: #146142;
+}
+
+.review-status {
+  display: inline-block;
+  padding: .125rem .5rem;
+  border-radius: .25rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.review-status[data-tone="pending"] {
+  background: var(--review-warning);
+  color: var(--review-warning-foreground);
+}
+
+.review-status[data-tone="complete"] {
+  background: var(--review-success);
+  color: var(--review-success-foreground);
+}
+
+.review-workspace details[open] > summary {
+  background: var(--accent);
+}
+
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 4px;
